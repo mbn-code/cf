@@ -211,32 +211,7 @@ void printVector(const vi& v) {
  * - Test with edge cases: n=1, n=max, all zeros, all max values
  */
 void solve() {
-    // TODO: Update these constraints from the problem statement!
-    const int MIN_N = 1;
-    const int MAX_N = 1e5;
-    const int MIN_ELEMENT = 1;
-    const int MAX_ELEMENT = 1e9;
     
-    int n = readInt(MIN_N, MAX_N);
-    
-    vi arr = readVector(n, MIN_ELEMENT, MAX_ELEMENT);
-    if (!validateVectorSize(arr, MIN_N, MAX_N)) {
-        exit(1);
-    }
-    
-    // TODO: Implement your solution
-    // Example: Find sum of array
-    
-    // SAFE: Use long long for sum to prevent overflow
-    ll sum = 0;
-    for (int x : arr) {
-        if (!canAdd(sum, x)) {
-            exit(1);
-        }
-        sum += x;
-    }
-    
-    cout << sum << el;
 }
 
 // ==================== MAIN ENTRY POINT ====================
