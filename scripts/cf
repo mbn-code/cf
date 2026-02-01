@@ -1,0 +1,250 @@
+#!/bin/bash
+
+################################################################################
+# cf - Codeforces CLI Tool
+#
+# Main command-line interface for C++ competitive programming
+#
+# Usage:
+#   cf template <name>         - Create new problem template
+#   cf <name> [input]          - Compile and run solution
+#
+# Examples:
+#   cf template 1000A          - Create src/1000A/ with solution.cpp
+#   cf 1000A input.txt         - Compile and run with input.txt
+#   cf 1000A "5\n1 2 3 4 5"    - Compile and run with inline input
+#
+# Features:
+#   - Auto-detects .cpp files
+#   - Handles multi-file compilation
+#   - Fast I/O configuration
+#   - Cross-platform (Linux/macOS/WSL)
+#   - Idempotent and robust
+#
+################################################################################
+
+set -e
+
+# ==================== CONFIGURATION ====================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+SRC_DIR="$REPO_ROOT/src"
+INCLUDE_DIR="$REPO_ROOT/include"
+
+# Compiler selection: prefer g++, fall back to clang++
+if command -v g++ &> /dev/null; then
+    COMPILER="g++"
+elif command -v clang++ &> /dev/null; then
+    COMPILER="clang++"
+else
+    echo "Error: No C++ compiler found. Install g++ or clang++."
+    exit 1
+fi
+
+# Compiler flags for competitive programming
+CXXFLAGS="-std=c++23 -O2 -Wall -Wextra"
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# ==================== HELPER FUNCTIONS ====================
+
+print_error() {
+    echo -e "${RED}Error: $1${NC}" >&2
+}
+
+print_success() {
+    echo -e "${GREEN}✓ $1${NC}"
+}
+
+print_info() {
+    echo -e "${BLUE}ℹ $1${NC}"
+}
+
+# Find .cpp files in a directory
+find_cpp_files() {
+    local dir="$1"
+    find "$dir" -maxdepth 1 -name "*.cpp" -type f
+}
+
+# Check if directory exists
+dir_exists() {
+    [ -d "$1" ]
+}
+
+# ==================== TEMPLATE COMMAND ====================
+
+cmd_template() {
+    local problem_name="$1"
+    
+    if [ -z "$problem_name" ]; then
+        print_error "Usage: cf template <name>"
+        echo "Example: cf template 1000A"
+        exit 1
+    fi
+    
+    # Create problem directory
+    local problem_dir="$SRC_DIR/$problem_name"
+    
+    if dir_exists "$problem_dir"; then
+        print_info "Problem directory already exists: $problem_dir"
+    else
+        mkdir -p "$problem_dir"
+        print_success "Created directory: $problem_dir"
+    fi
+    
+    # Copy template to solution.cpp
+    local solution_file="$problem_dir/solution.cpp"
+    
+    if [ -f "$solution_file" ]; then
+        print_info "Solution already exists: $solution_file"
+    else
+        if [ -f "$SRC_DIR/template.cpp" ]; then
+            cp "$SRC_DIR/template.cpp" "$solution_file"
+            print_success "Created solution: $solution_file"
+        else
+            print_error "Template file not found: $SRC_DIR/template.cpp"
+            exit 1
+        fi
+    fi
+    
+    # Compile to verify setup
+    print_info "Verifying compilation..."
+    local output_file="/tmp/cf_$problem_name$$"
+    
+    if $COMPILER $CXXFLAGS -I "$INCLUDE_DIR" "$solution_file" -o "$output_file" 2>/dev/null; then
+        print_success "Compilation verified"
+        rm -f "$output_file"
+    else
+        print_error "Compilation failed. Check your C++ compiler."
+        exit 1
+    fi
+    
+    echo ""
+    echo "Next steps:"
+    echo "  1. Edit solution: $solution_file"
+    echo "  2. Run: cf $problem_name < input.txt"
+    echo "  3. Or: cf $problem_name input.txt"
+}
+
+# ==================== RUN COMMAND ====================
+
+cmd_run() {
+    local problem_name="$1"
+    local input_arg="${2:-}"
+    
+    if [ -z "$problem_name" ]; then
+        print_error "Usage: cf <name> [input]"
+        echo "Example: cf 1000A input.txt"
+        exit 1
+    fi
+    
+    # Find the .cpp file
+    local cpp_file=""
+    
+    # Try problem directory first
+    if dir_exists "$SRC_DIR/$problem_name"; then
+        cpp_file=$(find "$SRC_DIR/$problem_name" -maxdepth 1 -name "*.cpp" | head -1)
+    fi
+    
+    # Try as direct file in src/
+    if [ -z "$cpp_file" ] && [ -f "$SRC_DIR/$problem_name.cpp" ]; then
+        cpp_file="$SRC_DIR/$problem_name.cpp"
+    fi
+    
+    if [ -z "$cpp_file" ]; then
+        print_error "Could not find C++ file for: $problem_name"
+        echo "Searched in:"
+        echo "  - $SRC_DIR/$problem_name/ (directory)"
+        echo "  - $SRC_DIR/$problem_name.cpp (file)"
+        exit 1
+    fi
+    
+    # Prepare output file
+    local output_file="/tmp/cf_$problem_name$$"
+    
+    # Compile
+    print_info "Compiling with $COMPILER..."
+    if ! $COMPILER $CXXFLAGS -I "$INCLUDE_DIR" "$cpp_file" -o "$output_file" 2>&1; then
+        print_error "Compilation failed"
+        exit 1
+    fi
+    print_success "Compiled successfully"
+    
+    # Prepare input
+    local input_data=""
+    
+    if [ -n "$input_arg" ]; then
+        if [ -f "$input_arg" ]; then
+            # Input is a file
+            print_info "Running with input from: $input_arg"
+            input_data=$(cat "$input_arg")
+        else
+            # Input is a string (possibly with escaped newlines)
+            print_info "Running with inline input"
+            # Interpret escape sequences
+            input_data=$(printf "%b" "$input_arg")
+        fi
+    else
+        print_info "Running with stdin (pipe input or interactive)"
+    fi
+    
+    # Execute with input
+    echo ""
+    print_info "Output:"
+    echo "---"
+    
+    if [ -n "$input_data" ]; then
+        echo -n "$input_data" | "$output_file"
+    else
+        "$output_file"
+    fi
+    
+    echo "---"
+    
+    # Cleanup
+    rm -f "$output_file"
+    
+    print_success "Execution complete"
+}
+
+# ==================== MAIN ENTRY POINT ====================
+
+main() {
+    # Validate repo structure
+    if [ ! -d "$SRC_DIR" ]; then
+        print_error "Repository structure not found. Expected $SRC_DIR"
+        exit 1
+    fi
+    
+    # Parse command
+    local command="${1:-}"
+    shift || true
+    
+    case "$command" in
+        template)
+            cmd_template "$@"
+            ;;
+        "")
+            print_error "Usage: cf <command> [args]"
+            echo ""
+            echo "Commands:"
+            echo "  template <name>    Create new problem template"
+            echo "  <name> [input]     Compile and run solution"
+            echo ""
+            echo "Examples:"
+            echo "  cf template 1000A"
+            echo "  cf 1000A input.txt"
+            exit 1
+            ;;
+        *)
+            cmd_run "$command" "$@"
+            ;;
+    esac
+}
+
+main "$@"

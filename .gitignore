@@ -1,0 +1,65 @@
+# Git ignore for C++ Competitive Programming Repository
+
+# Compiled binaries
+*.o
+*.obj
+*.exe
+*.a
+*.so
+*.dylib
+
+# Build directories
+/build/
+/bin/
+/dist/
+CMakeFiles/
+cmake_install.cmake
+Makefile (auto-generated)
+*.cmake
+
+# Temporary files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# IDE-specific files
+.vscode/
+.idea/
+*.swp
+*.iml
+*.sublime-project
+*.sublime-workspace
+
+# Executable test binaries
+/tmp/cf_*
+*.test
+*.gtest
+
+# Debug files
+*.dSYM/
+*.debug
+*.pdb
+
+# Codeforces-specific
+submission.cpp
+*.cf
+
+# Python cache (if using helper scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Node modules (if using npm/yarn)
+node_modules/
+
+# Environment files
+.env
+.env.local
+
+# OS-specific
+.venv/
+venv/
+env/
