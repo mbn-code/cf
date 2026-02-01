@@ -27,8 +27,20 @@ set -e
 
 # ==================== CONFIGURATION ====================
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+# Determine repository root
+if [ -f "${BASH_SOURCE[0]}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # If script is in the repo's scripts/ directory, use it
+    if [ -f "$SCRIPT_DIR/../src/template.cpp" ]; then
+        REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+    # Otherwise, use HOME-based fallback for global installation
+    else
+        REPO_ROOT="${CF_REPO_ROOT:-$HOME/Documents/GitHub/cf}"
+    fi
+else
+    REPO_ROOT="${CF_REPO_ROOT:-$HOME/Documents/GitHub/cf}"
+fi
+
 SRC_DIR="$REPO_ROOT/src"
 INCLUDE_DIR="$REPO_ROOT/include"
 
@@ -87,8 +99,8 @@ cmd_template() {
         exit 1
     fi
     
-    # Create problem directory
-    local problem_dir="$SRC_DIR/$problem_name"
+    # Create problem directory in current working directory
+    local problem_dir="$PWD/$problem_name"
     
     if dir_exists "$problem_dir"; then
         print_info "Problem directory already exists: $problem_dir"
@@ -126,46 +138,38 @@ cmd_template() {
     
     echo ""
     echo "Next steps:"
-    echo "  1. Edit solution: $solution_file"
-    echo "  2. Run: cf $problem_name < input.txt"
-    echo "  3. Or: cf $problem_name input.txt"
+    echo "  1. cd $problem_name"
+    echo "  2. Edit: solution.cpp"
+    echo "  3. Run: cf 8 (inline input)"
+    echo "  4. Or: cf input.txt (file input)"
 }
 
 # ==================== RUN COMMAND ====================
 
 cmd_run() {
-    local problem_name="$1"
-    local input_arg="${2:-}"
+    local input_arg="$1"
     
-    if [ -z "$problem_name" ]; then
-        print_error "Usage: cf <name> [input]"
-        echo "Example: cf 1000A input.txt"
-        exit 1
-    fi
-    
-    # Find the .cpp file
+    # Find .cpp file in current directory
     local cpp_file=""
     
-    # Try problem directory first
-    if dir_exists "$SRC_DIR/$problem_name"; then
-        cpp_file=$(find "$SRC_DIR/$problem_name" -maxdepth 1 -name "*.cpp" | head -1)
-    fi
-    
-    # Try as direct file in src/
-    if [ -z "$cpp_file" ] && [ -f "$SRC_DIR/$problem_name.cpp" ]; then
-        cpp_file="$SRC_DIR/$problem_name.cpp"
+    # First, look for solution.cpp in current directory
+    if [ -f "$PWD/solution.cpp" ]; then
+        cpp_file="$PWD/solution.cpp"
+    else
+        # Otherwise, find any .cpp file in current directory
+        cpp_file=$(find "$PWD" -maxdepth 1 -name "*.cpp" -type f | head -1)
     fi
     
     if [ -z "$cpp_file" ]; then
-        print_error "Could not find C++ file for: $problem_name"
-        echo "Searched in:"
-        echo "  - $SRC_DIR/$problem_name/ (directory)"
-        echo "  - $SRC_DIR/$problem_name.cpp (file)"
+        print_error "No C++ file found in current directory"
+        echo "Searched in: $PWD"
         exit 1
     fi
     
+    print_info "Using: $(basename "$cpp_file")"
+    
     # Prepare output file
-    local output_file="/tmp/cf_$problem_name$$"
+    local output_file="/tmp/cf_$(basename "$cpp_file" .cpp)$$"
     
     # Compile
     print_info "Compiling with $COMPILER..."
@@ -234,11 +238,12 @@ main() {
             echo ""
             echo "Commands:"
             echo "  template <name>    Create new problem template"
-            echo "  <name> [input]     Compile and run solution"
+            echo "  [input]            Compile and run solution in current directory"
             echo ""
             echo "Examples:"
             echo "  cf template 1000A"
-            echo "  cf 1000A input.txt"
+            echo "  cf 8               Run with inline input '8'"
+            echo "  cf input.txt       Run with input from file"
             exit 1
             ;;
         *)
