@@ -88,6 +88,31 @@ dir_exists() {
     [ -d "$1" ]
 }
 
+# Extract test input from problem description file
+# Looks for "Input" section under "Examples" and extracts until "Output"
+extract_test_input() {
+    local file="$1"
+    local content=$(cat "$file")
+    
+    # Check if this looks like a problem description with Examples section
+    if echo "$content" | grep -qi "Examples"; then
+        # Extract input between "Input" (after Examples) and "Output"
+        # Using awk to find the pattern and extract the input
+        awk '
+            BEGIN { in_input = 0; in_example = 0 }
+            /Examples/ { in_example = 1; next }
+            in_example && /^Input$/ { in_input = 1; next }
+            in_example && /^Copy$/ && in_input { next }
+            in_example && in_input && /^Output$/ { exit }
+            in_example && in_input && /^Copy$/ { exit }
+            in_example && in_input && NF > 0 { print }
+        ' "$file"
+    else
+        # Regular input file, return as-is
+        cat "$file"
+    fi
+}
+
 # ==================== TEMPLATE COMMAND ====================
 
 cmd_template() {
@@ -124,6 +149,26 @@ cmd_template() {
         fi
     fi
     
+    # Create problem.txt file
+    local problem_file="$problem_dir/problem.txt"
+    
+    if [ -f "$problem_file" ]; then
+        print_info "Problem file already exists: $problem_file"
+    else
+        cat > "$problem_file" << 'EOF'
+# Paste the problem statement here from Codeforces
+
+Examples
+Input
+
+
+Output
+
+
+EOF
+        print_success "Created problem file: $problem_file"
+    fi
+    
     # Compile to verify setup
     print_info "Verifying compilation..."
     local output_file="/tmp/cf_$problem_name$$"
@@ -136,12 +181,18 @@ cmd_template() {
         exit 1
     fi
     
+    # Open files in VS Code if available
+    if command -v code &> /dev/null; then
+        print_info "Opening files in VS Code..."
+        code "$problem_file" "$solution_file"
+        print_success "Opened in VS Code"
+    fi
+    
     echo ""
     echo "Next steps:"
-    echo "  1. cd $problem_name"
-    echo "  2. Edit: solution.cpp"
-    echo "  3. Run: cf 8 (inline input)"
-    echo "  4. Or: cf input.txt (file input)"
+    echo "  1. Paste problem statement in problem.txt"
+    echo "  2. Edit solution in solution.cpp"
+    echo "  3. cd $problem_name && cf problem.txt"
 }
 
 # ==================== RUN COMMAND ====================
@@ -184,9 +235,9 @@ cmd_run() {
     
     if [ -n "$input_arg" ]; then
         if [ -f "$input_arg" ]; then
-            # Input is a file
+            # Input is a file - extract test input intelligently
             print_info "Running with input from: $input_arg"
-            input_data=$(cat "$input_arg")
+            input_data=$(extract_test_input "$input_arg")
         else
             # Input is a string (possibly with escaped newlines)
             print_info "Running with inline input"
