@@ -53,19 +53,19 @@ command_exists() {
 
 # Get OS type
 detect_os() {
-    if [[ "$OSTYPE" == "linux-gnu"* ]] || grep -qi microsoft /proc/version 2>/dev/null; then
-        echo "linux"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "macos"
-    else
-        echo "unknown"
-    fi
-}
+    elif [[ "$OSTYPE" == "linux-gnu"* ]] || grep -qi microsoft /proc/version 2>/dev/null; then
+        # Detect Linux distribution
+        if [ -f /etc/fedora-release ]; then
+            echo "fedora"
+        elif [ -f /etc/redhat-release ] && ! [ -f /etc/fedora-release ]; then
+            echo "redhat"
+        elif command -v apt-get >/dev/null 2>&1; then
+            echo "debiaDEBIAN/UBUNTU SETUP ====================
 
-# ==================== LINUX SETUP ====================
-
-setup_linux() {
-    print_header "Setting up C++ environment on Linux"
+setup_debian() {
+    print_header "Setting up C++ environment on Debian/Ubuntu"
     
     print_info "Updating package manager..."
     sudo apt-get update -qq 2>/dev/null || true
@@ -117,6 +117,76 @@ setup_linux() {
     if ! command_exists cmake; then
         print_info "Installing cmake..."
         sudo apt-get install -y cmake pkg-config 2>/dev/null
+        print_success "cmake and pkg-config installed"
+    else
+        print_success "cmake and pkg-config are already installed"
+    fi
+    
+    # Install development headers
+    if ! dpkg -l | grep -q build-essential; then
+        print_info "Installing build-essential..."
+        sudo apt-get install -y build-essential 2>/dev/null
+        print_success "build-essential installed"
+    fi
+}
+
+# ==================== FEDORA/REDHAT SETUP ====================
+
+setup_fedora() {
+    print_header "Setting up C++ environment on Fedora/RHEL"
+    
+    print_info "Updating package manager..."
+    sudo dnf check-update -q 2>/dev/null || true
+    
+    # Install g++ (gcc-c++)
+    if ! command_exists g++; then
+        print_info "Installing g++..."
+        sudo dnf install -y gcc-c++ 2>/dev/null
+        print_success "g++ installed"
+    else
+        print_success "g++ is already installed ($(g++ --version | head -1))"
+    fi
+    
+    # Install clang++
+    if ! command_exists clang++; then
+        print_info "Installing clang++..."
+        sudo dnf install -y clang 2>/dev/null
+        print_success "clang++ installed"
+    else
+        print_success "clang++ is already installed ($(clang++ --version | head -1))"
+    fi
+    
+    # Install make
+    if ! command_exists make; then
+        print_info "Installing make..."
+        sudo dnf install -y make 2>/dev/null
+        print_success "make installed"
+    else
+        print_success "make is already installed"
+    fi
+    
+    # Install gdb
+    if ! command_exists gdb; then
+        print_info "Installing gdb..."
+        sudo dnf install -y gdb 2>/dev/null
+        print_success "gdb installed"
+    else
+        print_success "gdb is already installed"
+    fi
+    
+    # Install cmake and pkg-config
+    if ! command_exists cmake; then
+        print_info "Installing cmake..."
+        sudo dnf install -y cmake pkgconf-pkg-config 2>/dev/null
+        print_success "cmake and pkg-config installed"
+    else
+        print_success "cmake and pkg-config are already installed"
+    fi
+    
+    # Install development tools group
+    print_info "Installing Development Tools..."
+    sudo dnf groupinstall -y "Development Tools" 2>/dev/null || true
+    print_success "Development Tools installed"  sudo apt-get install -y cmake pkg-config 2>/dev/null
         print_success "cmake and pkg-config installed"
     else
         print_success "cmake and pkg-config are already installed"
@@ -327,14 +397,31 @@ verify_installation() {
     
     if command_exists make; then
         print_success "make is installed"
-    else
-        print_error "make not found"
-        ((failed++))
-    fi
-    
-    if [ -f "$(dirname "${BASH_SOURCE[0]}")/cf" ]; then
-        print_success "cf command script found"
-    else
+    case $OS in
+        debian)
+            setup_debian
+            ;;
+        fedora|redhat)
+            setup_fedora
+            ;;
+        macos)
+            setup_macos
+            ;;
+        linux)
+            # Generic Linux fallback - try Debian first
+            print_warning "Could not detect specific Linux distribution"
+            print_info "Attempting Debian/Ubuntu setup..."
+            setup_debian 2>/dev/null || setup_fedora 2>/dev/null || {
+                print_error "Could not install packages. Please install manually: g++, clang++, make, gdb"
+                exit 1
+            }
+            ;;
+        *)
+            print_error "Unsupported OS: $OSTYPE"
+            print_info "Supported: Ubuntu/Debian, Fedora/RHEL, macOS"
+            exit 1
+            ;;
+    esacse
         print_warning "cf command script not found"
         ((failed++))
     fi
