@@ -1,4 +1,9 @@
 #!/bin/bash
+
+# Get the directory where the test script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CF_REPO_ROOT="$SCRIPT_DIR"
+
 echo "╔════════════════════════════════════════╗"
 echo "║  PRODUCTION READINESS TEST SUITE       ║"
 echo "╚════════════════════════════════════════╝"
@@ -6,13 +11,13 @@ echo ""
 
 # Test 1: Makefile
 echo "✓ Test 1: Makefile build system"
-make all > /dev/null 2>&1 && echo "  ✓ Compilation: PASS" || echo "  ✗ Compilation: FAIL"
+cd "$CF_REPO_ROOT" && make all > /dev/null 2>&1 && echo "  ✓ Compilation: PASS" || echo "  ✗ Compilation: FAIL"
 echo ""
 
 # Test 2: CLI - Template creation
 echo "✓ Test 2: CLI template creation"
 cd /tmp && rm -rf cf_test2 && mkdir cf_test2 && cd cf_test2
-bash /home/mbn/Documents/GitHub/cf/scripts/cf template 1000A > /dev/null 2>&1
+bash "$CF_REPO_ROOT/scripts/cf" template 1000A > /dev/null 2>&1
 if [ -f "1000A/solution.cpp" ]; then
   echo "  ✓ Template creation: PASS"
 else
@@ -22,7 +27,7 @@ echo ""
 
 # Test 3: Input validation
 echo "✓ Test 3: Template input validation functions"
-cd /home/mbn/Documents/GitHub/cf
+cd "$CF_REPO_ROOT"
 if grep -q "validateRange" src/template.cpp && grep -q "canAdd" src/template.cpp; then
   echo "  ✓ Input validation: PASS"
 else
@@ -51,6 +56,7 @@ echo ""
 
 # Test 6: Documentation
 echo "✓ Test 6: Documentation completeness"
+cd "$CF_REPO_ROOT"
 doc_checks=0
 [ -f "README.md" ] && ((doc_checks++))
 [ -f "PRODUCTION_UPGRADE.md" ] && ((doc_checks++))
