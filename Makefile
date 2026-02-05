@@ -44,7 +44,7 @@ FILE ?= solution
 # ==================== TARGETS ====================
 
 all: create_build_dir compile
-	@echo "✓ All files compiled successfully"
+	@echo "All files compiled successfully"
 
 create_build_dir:
 	@mkdir -p $(BUILD_DIR)
@@ -54,9 +54,9 @@ compile: create_build_dir
 	@find $(SRC_DIR) -name "*.cpp" -type f | while read file; do \
 		filename=$$(basename "$$file" .cpp); \
 		if $(CXX) $(CXXFLAGS) $(INCLUDE) "$$file" -o $(BUILD_DIR)/$$filename 2>&1; then \
-			echo "  ✓ $$filename"; \
+			echo "  PASS: $$filename"; \
 		else \
-			echo "  ✗ Compilation failed for $$filename"; \
+			echo "  FAIL: Compilation failed for $$filename"; \
 			exit 1; \
 		fi; \
 	done
@@ -65,30 +65,30 @@ run: create_build_dir
 	@echo "Compiling $(FILE) with $(CXX)..."
 	@if [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then \
 		if $(CXX) $(CXXFLAGS) $(INCLUDE) $(SRC_DIR)/$(FILE).cpp -o $(OUTPUT_DIR)/$(FILE) 2>&1; then \
-			echo "✓ Compiled: $(FILE)"; \
+			echo "Compiled: $(FILE)"; \
 			echo "Running with 5s timeout..."; \
 			echo "---"; \
 			timeout 5 $(OUTPUT_DIR)/$(FILE) 2>&1 || true; \
 			echo "---"; \
 			rm -f $(OUTPUT_DIR)/$(FILE); \
 		else \
-			echo "✗ Compilation failed"; \
+			echo "FAIL: Compilation failed"; \
 			exit 1; \
 		fi; \
 	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then \
 		if $(CXX) $(CXXFLAGS) $(INCLUDE) $(SRC_DIR)/$(FILE)/solution.cpp -o $(OUTPUT_DIR)/$(FILE) 2>&1; then \
-			echo "✓ Compiled: $(FILE)"; \
+			echo "Compiled: $(FILE)"; \
 			echo "Running with 5s timeout..."; \
 			echo "---"; \
 			timeout 5 $(OUTPUT_DIR)/$(FILE) 2>&1 || true; \
 			echo "---"; \
 			rm -f $(OUTPUT_DIR)/$(FILE); \
 		else \
-			echo "✗ Compilation failed"; \
+			echo "FAIL: Compilation failed"; \
 			exit 1; \
 		fi; \
 	else \
-		echo "✗ Error: Could not find $(FILE).cpp or $(FILE)/solution.cpp"; \
+		echo "FAIL: Error: Could not find $(FILE).cpp or $(FILE)/solution.cpp"; \
 		exit 1; \
 	fi
 
@@ -96,27 +96,27 @@ debug: create_build_dir
 	@echo "Compiling $(FILE) with debug symbols..."
 	@if [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then \
 		if $(CXX) $(CXXFLAGS) -g $(INCLUDE) $(SRC_DIR)/$(FILE).cpp -o $(BUILD_DIR)/$(FILE)_debug 2>&1; then \
-			echo "✓ Debug binary: $(BUILD_DIR)/$(FILE)_debug"; \
+			echo "Debug binary: $(BUILD_DIR)/$(FILE)_debug"; \
 		else \
-			echo "✗ Compilation failed"; \
+			echo "FAIL: Compilation failed"; \
 			exit 1; \
 		fi; \
 	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then \
 		if $(CXX) $(CXXFLAGS) -g $(INCLUDE) $(SRC_DIR)/$(FILE)/solution.cpp -o $(BUILD_DIR)/$(FILE)_debug 2>&1; then \
-			echo "✓ Debug binary: $(BUILD_DIR)/$(FILE)_debug"; \
+			echo "Debug binary: $(BUILD_DIR)/$(FILE)_debug"; \
 		else \
-			echo "✗ Compilation failed"; \
+			echo "FAIL: Compilation failed"; \
 			exit 1; \
 		fi; \
 	else \
-		echo "✗ Error: Could not find $(FILE).cpp or $(FILE)/solution.cpp"; \
+		echo "FAIL: Error: Could not find $(FILE).cpp or $(FILE)/solution.cpp"; \
 		exit 1; \
 	fi
 
 clean:
 	@rm -rf $(BUILD_DIR)
 	@find $(SRC_DIR) -name "*.o" -delete
-	@echo "✓ Cleaned build artifacts"
+	@echo "Cleaned build artifacts"
 
 help:
 	@echo "Makefile for C++ Competitive Programming"

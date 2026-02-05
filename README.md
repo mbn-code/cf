@@ -8,28 +8,32 @@ A robust, industry-standard C++ competitive programming environment for Codeforc
 
 ## Key Features
 
-✅ **Production-Ready Reliability**
+**Production-Ready Reliability**
+
 - Timeout protection (prevents infinite loops - critical for auto-judging)
 - Comprehensive input validation and bounds checking
 - Automatic overflow detection for large numbers
 - Error handling on every execution path
 - Cross-platform compatibility (Linux, macOS, WSL)
 
-✅ **Development Efficiency**
+**Development Efficiency**
+
 - Fast I/O configuration (crucial for large inputs)
 - Pre-configured competitive programming template
 - One-command compilation and testing
 - Integrated test validation framework
 - Debug symbols and verbose output modes
 
-✅ **Safety & Correctness**
+**Safety & Correctness**
+
 - Validates input against problem constraints
 - Detects integer overflow before it happens
 - Timeout protection (5s default)
 - Output diff comparison
 - Example-based validation
 
-✅ **Developer Experience**
+**Developer Experience**
+
 - CLI tool for quick problem setup
 - Auto-detection of C++ files
 - VS Code integration
@@ -139,10 +143,10 @@ make clean
 ### 1. Always Validate Input Ranges
 
 ```cpp
-// ✓ GOOD: Validate against problem constraints
+// GOOD: Validate against problem constraints
 int n = readInt(1, 1000000);  // Min=1, Max=1M
 
-// ✗ BAD: No validation
+// BAD: No validation
 int n;
 cin >> n;
 ```
@@ -150,13 +154,13 @@ cin >> n;
 ### 2. Use Long Long for Large Numbers
 
 ```cpp
-// ✓ GOOD: Prevents overflow
+// GOOD: Prevents overflow
 ll sum = 0;
 for (int x : arr) {
     sum += x;  // Safe for values up to 10^18
 }
 
-// ✗ BAD: Integer overflow
+// BAD: Integer overflow
 int sum = 0;  // Overflows if sum > 2^31-1
 for (int x : arr) {
     sum += x;
@@ -177,17 +181,18 @@ cout.tie(nullptr);
 ### 4. Test Edge Cases
 
 ```
-• Empty input (n=0)
-• Minimum size (n=1)
-• Maximum size (n=10^5)
-• All zeros
-• All maximum values
-• Mix of negative/positive
+- Empty input (n=0)
+- Minimum size (n=1)
+- Maximum size (n=10^5)
+- All zeros
+- All maximum values
+- Mix of negative/positive
 ```
 
 ### 5. Handle Timeouts Gracefully
 
 The system automatically kills programs exceeding 5 seconds. Optimize for:
+
 - Algorithms: Use O(n log n) instead of O(n²)
 - I/O: Enable fast I/O (see step 3)
 - Memory: Pre-allocate vectors instead of using push_back in loops
@@ -213,29 +218,30 @@ cout << "\n";
 ### Pre-Submission Checklist
 
 ```
-☐ Run: cf test                    # Validate all solutions compile
-☐ Check: Edge cases (n=1, n=max)
-☐ Verify: Output format matches examples
-☐ Ensure: Fast I/O enabled
-☐ Review: Integer overflow risks
-☐ Confirm: Timeout protection active
-☐ Test: With maximum input size
+- Run: cf test                    # Validate all solutions compile
+- Check: Edge cases (n=1, n=max)
+- Verify: Output format matches examples
+- Ensure: Fast I/O enabled
+- Review: Integer overflow risks
+- Confirm: Timeout protection active
+- Test: With maximum input size
 ```
 
 ### Common Issues & Solutions
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| **Compilation fails** | Missing headers or syntax error | `cf 1000A` shows compilation error; fix and retry |
-| **Wrong answer (WA)** | Logic error or output format mismatch | Compare output with `cf -v problem.txt` |
-| **Time limit (TLE)** | Too slow algorithm | Use fast I/O, better algorithm (O(n log n) vs O(n²)) |
-| **Runtime error (RE)** | Segfault, buffer overflow | Use bounds checking, validate array indices |
-| **Presentation error** | Extra spaces or missing newline | Check output format carefully |
-| **Timeout (>5s)** | Infinite loop or very slow code | Add timeout protection in debug |
+| Issue                  | Cause                                 | Solution                                             |
+| ---------------------- | ------------------------------------- | ---------------------------------------------------- |
+| **Compilation fails**  | Missing headers or syntax error       | `cf 1000A` shows compilation error; fix and retry    |
+| **Wrong answer (WA)**  | Logic error or output format mismatch | Compare output with `cf -v problem.txt`              |
+| **Time limit (TLE)**   | Too slow algorithm                    | Use fast I/O, better algorithm (O(n log n) vs O(n²)) |
+| **Runtime error (RE)** | Segfault, buffer overflow             | Use bounds checking, validate array indices          |
+| **Presentation error** | Extra spaces or missing newline       | Check output format carefully                        |
+| **Timeout (>5s)**      | Infinite loop or very slow code       | Add timeout protection in debug                      |
 
 ### Troubleshooting
 
 #### "No C++ compiler found"
+
 ```bash
 # Ubuntu/Debian
 sudo apt install g++ make
@@ -248,6 +254,7 @@ sudo apt install build-essential
 ```
 
 #### "Repository structure not found"
+
 ```bash
 # Ensure you're in the cf directory
 cd ~/Documents/GitHub/cf
@@ -255,6 +262,7 @@ echo $PWD  # Should show cf directory
 ```
 
 #### "Compilation timeout"
+
 ```bash
 # Your code has an infinite loop or is very complex
 # Use debug mode to step through
@@ -317,6 +325,7 @@ export CXX=clang++
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+
 - Code style and conventions
 - Performance best practices
 - Algorithm template submissions
@@ -352,13 +361,13 @@ bash scripts/test.sh -t 10 -v
 
 ## Supported Platforms
 
-| OS | Status | Notes |
-|---|-----|----|
-| Linux (Ubuntu 20.04+) | ✅ Fully Supported | Tested on Ubuntu 22.04 LTS |
-| macOS 11+ | ✅ Fully Supported | Works with both g++ and clang++ |
-| WSL2 (Windows) | ✅ Fully Supported | Install Linux distro via WSL |
-| WSL1 (Windows) | ⚠️ Limited | Recommended to upgrade to WSL2 |
-| Docker | ✅ Supported | Run `ubuntu:22.04` image |
+| OS                    | Status          | Notes                           |
+| --------------------- | --------------- | ------------------------------- |
+| Linux (Ubuntu 20.04+) | Fully Supported | Tested on Ubuntu 22.04 LTS      |
+| macOS 11+             | Fully Supported | Works with both g++ and clang++ |
+| WSL2 (Windows)        | Fully Supported | Install Linux distro via WSL    |
+| WSL1 (Windows)        | Limited         | Recommended to upgrade to WSL2  |
+| Docker                | Supported       | Run `ubuntu:22.04` image        |
 
 ## License
 
@@ -375,11 +384,11 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 This toolkit is designed for **99%+ reliability** on Codeforces:
 
-- ✓ Handles all standard input/output formats
-- ✓ Prevents common competitive programming errors
-- ✓ Timeout protection on all executions
-- ✓ Works with multi-file submissions
-- ✓ Production-grade error messages
+- Handles all standard input/output formats
+- Prevents common competitive programming errors
+- Timeout protection on all executions
+- Works with multi-file submissions
+- Production-grade error messages
 
 ---
 

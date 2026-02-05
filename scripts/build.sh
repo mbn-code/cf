@@ -49,15 +49,15 @@ print_header() {
 }
 
 print_success() {
-    echo "✓ $1"
+    echo "PASS: $1"
 }
 
 print_error() {
-    echo "✗ $1" >&2
+    echo "FAIL: $1" >&2
 }
 
 print_info() {
-    echo "ℹ $1"
+    echo "INFO: $1"
 }
 
 show_help() {
@@ -87,24 +87,24 @@ EOF
 
 build_all() {
     print_header "Building all solutions"
-    
+
     if [ ! -d "$SRC_DIR" ]; then
         print_error "Source directory not found: $SRC_DIR"
         exit 1
     fi
-    
+
     mkdir -p "$BUILD_DIR"
-    
+
     local count=0
     find "$SRC_DIR" -name "*.cpp" -type f | while read -r file; do
         # Skip template.cpp
         if [[ "$file" == *"/template.cpp" ]]; then
             continue
         fi
-        
+
         local filename=$(basename "$file" .cpp)
         local output="$BUILD_DIR/$filename"
-        
+
         print_info "Compiling: $filename"
         if $COMPILER $CXXFLAGS $INCLUDE_FLAGS "$file" -o "$output"; then
             print_success "Compiled: $filename"
@@ -113,7 +113,7 @@ build_all() {
             print_error "Failed to compile: $filename"
         fi
     done
-    
+
     if [ $count -gt 0 ]; then
         echo ""
         print_success "Built $count solution(s)"
@@ -122,12 +122,12 @@ build_all() {
 
 build_and_run() {
     local problem_name="$1"
-    
+
     print_header "Build and Run: $problem_name"
-    
+
     # Find the .cpp file
     local cpp_file=""
-    
+
     if [ -f "$SRC_DIR/$problem_name.cpp" ]; then
         cpp_file="$SRC_DIR/$problem_name.cpp"
     elif [ -f "$SRC_DIR/$problem_name/solution.cpp" ]; then
@@ -139,39 +139,39 @@ build_and_run() {
         echo "  - $SRC_DIR/$problem_name/solution.cpp"
         exit 1
     fi
-    
+
     mkdir -p "$BUILD_DIR"
     local output="$BUILD_DIR/$problem_name"
-    
+
     print_info "Compiling with $COMPILER..."
     if ! $COMPILER $CXXFLAGS $INCLUDE_FLAGS "$cpp_file" -o "$output"; then
         print_error "Compilation failed"
         exit 1
     fi
     print_success "Compiled successfully"
-    
+
     echo ""
     print_info "Running: $problem_name"
     echo "───────────────────────────────────────"
-    
+
     if [ -f "$SRC_DIR/../tests/${problem_name}_input.txt" ]; then
         "$output" < "$SRC_DIR/../tests/${problem_name}_input.txt"
     else
         "$output"
     fi
-    
+
     echo "───────────────────────────────────────"
     print_success "Execution complete"
 }
 
 build_debug() {
     local problem_name="$1"
-    
+
     print_header "Debug Build: $problem_name"
-    
+
     # Find the .cpp file
     local cpp_file=""
-    
+
     if [ -f "$SRC_DIR/$problem_name.cpp" ]; then
         cpp_file="$SRC_DIR/$problem_name.cpp"
     elif [ -f "$SRC_DIR/$problem_name/solution.cpp" ]; then
@@ -180,28 +180,28 @@ build_debug() {
         print_error "Could not find source file for: $problem_name"
         exit 1
     fi
-    
+
     mkdir -p "$BUILD_DIR"
     local output="$BUILD_DIR/${problem_name}_debug"
-    
+
     print_info "Compiling with debug symbols..."
     if ! $COMPILER $CXXFLAGS -g $INCLUDE_FLAGS "$cpp_file" -o "$output"; then
         print_error "Debug compilation failed"
         exit 1
     fi
-    
+
     print_success "Debug binary: $output"
     print_info "Run with: gdb $output (Linux) or lldb $output (macOS)"
 }
 
 clean_build() {
     print_header "Cleaning build artifacts"
-    
+
     if [ -d "$BUILD_DIR" ]; then
         rm -rf "$BUILD_DIR"
         print_success "Removed: $BUILD_DIR"
     fi
-    
+
     find "$SRC_DIR" -name "*.o" -delete 2>/dev/null || true
     print_success "Clean complete"
 }
@@ -210,7 +210,7 @@ clean_build() {
 
 main() {
     local command="${1:-all}"
-    
+
     case "$command" in
         -h | --help)
             show_help

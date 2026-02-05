@@ -34,19 +34,19 @@ print_header() {
 }
 
 print_success() {
-    echo -e "${GREEN}✓ $1${NC}"
+    echo -e "${GREEN}PASS: $1${NC}"
 }
 
 print_info() {
-    echo -e "${BLUE}ℹ $1${NC}"
+    echo -e "${BLUE}INFO: $1${NC}"
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠ $1${NC}"
+    echo -e "${YELLOW}WARN: $1${NC}"
 }
 
 print_error() {
-    echo -e "${RED}✗ $1${NC}"
+    echo -e "${RED}FAIL: $1${NC}"
 }
 
 command_exists() {
@@ -458,7 +458,7 @@ main() {
         echo "Try it now:"
         echo "  cf template hello_world"
         echo ""
-        echo "Happy coding! 🚀"
+        echo "Happy coding!"
     else
         print_error "Setup completed with warnings. Please review above."
         exit 1

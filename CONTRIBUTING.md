@@ -7,11 +7,13 @@ This repository is designed for competitive programming on Codeforces and simila
 ### Creating New Solutions
 
 1. **Generate a template:**
+
    ```bash
    cf template problem_1000A
    ```
 
 2. **Edit your solution:**
+
    ```bash
    vim src/problem_1000A/solution.cpp
    ```
@@ -33,6 +35,7 @@ This repository is designed for competitive programming on Codeforces and simila
 ### Performance
 
 - Always enable fast I/O:
+
   ```cpp
   ios::sync_with_stdio(false);
   cin.tie(nullptr);
@@ -51,6 +54,7 @@ This repository is designed for competitive programming on Codeforces and simila
 ## Adding Custom Templates
 
 1. Create a new file in `templates/`:
+
    ```bash
    touch templates/string_algorithms.cpp
    ```
@@ -142,6 +146,7 @@ Space Complexity: O(n)
 ```
 
 Example:
+
 ```
 [Codeforces 1000A] Implements greedy sorting algorithm
 
@@ -158,6 +163,7 @@ Space Complexity: O(n)
 ### Issue: `cf: command not found`
 
 **Solution:**
+
 ```bash
 # Re-run setup
 bash scripts/setup.sh
@@ -169,6 +175,7 @@ source ~/.bashrc  # or ~/.zshrc
 ### Issue: Compilation fails with C++23
 
 **Solution:**
+
 ```bash
 # Check compiler version
 g++ --version
@@ -183,6 +190,7 @@ export CXX=clang++
 ### Issue: Slow compilation
 
 **Solution:**
+
 - Precompiled headers (advanced)
 - Use `-O1` instead of `-O2` for development
 - Split into smaller .cpp files
@@ -240,11 +248,13 @@ for (auto it = v.begin(); it != v.end(); ++it) {
 ## Submitting to Codeforces
 
 1. **Verify locally first:**
+
    ```bash
    cf problem_name input.txt
    ```
 
 2. **Copy to submission:**
+
    ```bash
    cp src/problem_name/solution.cpp submission.cpp
    ```
@@ -255,4 +265,4 @@ for (auto it = v.begin(); it != v.end(); ++it) {
 
 Refer to the main `README.md` or check the template files for examples.
 
-Happy coding! 🎯
+Happy coding!

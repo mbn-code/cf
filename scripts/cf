@@ -85,19 +85,19 @@ VERBOSE=${CF_VERBOSE:-0}
 # ==================== HELPER FUNCTIONS ====================
 
 print_error() {
-    printf '%b\n' "${RED}✗ Error: $1${NC}" >&2
+    printf '%b\n' "${RED}Error: $1${NC}" >&2
 }
 
 print_success() {
-    printf '%b\n' "${GREEN}✓ $1${NC}"
+    printf '%b\n' "${GREEN}Success: $1${NC}"
 }
 
 print_warning() {
-    printf '%b\n' "${YELLOW}⚠ $1${NC}"
+    printf '%b\n' "${YELLOW}Warning: $1${NC}"
 }
 
 print_info() {
-    printf '%b\n' "${BLUE}ℹ $1${NC}"
+    printf '%b\n' "${BLUE}Info: $1${NC}"
 }
 
 print_debug() {
@@ -197,6 +197,67 @@ safe_compile() {
     return 0
 }
 
+# Extract example block (input or output) from problem description file
+extract_example_block() {
+    local file="$1"
+    local sample_index="${2:-1}"
+    local target="$3"
+
+    if [ ! -f "$file" ]; then
+        return 1
+    fi
+
+    # Check if this looks like a problem description with Examples section
+    if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
+        awk -v idx="$sample_index" -v target="$target" '
+            function norm(s){ gsub(/\r/, "", s); return s }
+            function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+            function norm_head(s){ s=tolower(s); gsub(/[[:space:]]+/, " ", s); s=trim(s); return s }
+            function is_head(s, name){ s=norm_head(s); name=tolower(name); return (s==name || s==name":" || s==name" :") }
+            function is_input_head(s){ return is_head(s, "input") || is_head(s, "sample input") }
+            function is_output_head(s){ return is_head(s, "output") || is_head(s, "sample output") }
+            function is_stop_head(s){ return is_head(s, "note") || is_head(s, "explanation") || is_head(s, "constraints") || is_head(s, "examples") }
+            BEGIN { in_examples=0; in_block=0; printed=0; example_idx=0 }
+            {
+                line=norm($0)
+                if (!in_examples && line ~ /^[[:space:]]*$/) next
+                if (!in_examples && tolower(line) ~ /^examples?$/) { in_examples=1; next }
+                if (!in_examples && tolower(line) ~ /^example[[:space:]]*[0-9]*$/) { in_examples=1; next }
+                if (!in_examples) next
+
+                if (is_input_head(line)) {
+                    example_idx++
+                    if (target=="input") {
+                        in_block=(example_idx==idx)
+                    } else {
+                        if (in_block && example_idx > idx) exit
+                        in_block=0
+                    }
+                    next
+                }
+                if (is_output_head(line)) {
+                    if (target=="output") {
+                        in_block=(example_idx==idx)
+                    } else if (in_block) {
+                        exit
+                    }
+                    next
+                }
+                if (target=="output" && is_stop_head(line)) { if (in_block) exit }
+
+                if (in_block) {
+                    if (tolower(trim(line))=="copy") next
+                    print line
+                    printed=1
+                }
+            }
+            END { if (!printed) exit 1 }
+        ' "$file"
+    else
+        return 1
+    fi
+}
+
 # Extract test input from problem description file
 extract_test_input() {
     local file="$1"
@@ -207,33 +268,8 @@ extract_test_input() {
         return 1
     fi
 
-    # Check if this looks like a problem description with Examples section
     if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
-        # Extract the selected example input block after "Examples"
-        awk -v idx="$sample_index" '
-            function norm(s){ gsub(/\r/, "", s); return s }
-            function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
-            function norm_head(s){ s=tolower(s); gsub(/[[:space:]]+/, " ", s); s=trim(s); return s }
-            function is_head(s, name){ s=norm_head(s); name=tolower(name); return (s==name || s==name":" || s==name" :") }
-            BEGIN { in_examples=0; in_input=0; printed=0; example_idx=0 }
-            {
-                line=norm($0)
-                if (!in_examples && line ~ /^[[:space:]]*$/) next
-                if (!in_examples && tolower(line) ~ /^examples?$/) { in_examples=1; next }
-                if (!in_examples && tolower(line) ~ /^example[[:space:]]*[0-9]*$/) { in_examples=1; next }
-                if (!in_examples) next
-
-                if (is_head(line, "input") || is_head(line, "sample input")) { example_idx++; in_input=(example_idx==idx); next }
-                if (is_head(line, "output") || is_head(line, "sample output")) { if (in_input) exit; next }
-
-                if (in_input) {
-                    if (tolower(trim(line))=="copy") next
-                    print line
-                    printed=1
-                }
-            }
-            END { if (!printed) exit 1 }
-        ' "$file"
+        extract_example_block "$file" "$sample_index" "input"
     else
         # Regular input file, return as-is
         cat "$file"
@@ -249,34 +285,8 @@ extract_expected_output() {
         return 1
     fi
 
-    # Check if this looks like a problem description with Examples section
     if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
-        # Extract the selected example output block after "Examples"
-        awk -v idx="$sample_index" '
-            function norm(s){ gsub(/\r/, "", s); return s }
-            function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
-            function norm_head(s){ s=tolower(s); gsub(/[[:space:]]+/, " ", s); s=trim(s); return s }
-            function is_head(s, name){ s=norm_head(s); name=tolower(name); return (s==name || s==name":" || s==name" :") }
-            BEGIN { in_examples=0; in_output=0; printed=0; example_idx=0 }
-            {
-                line=norm($0)
-                if (!in_examples && line ~ /^[[:space:]]*$/) next
-                if (!in_examples && tolower(line) ~ /^examples?$/) { in_examples=1; next }
-                if (!in_examples && tolower(line) ~ /^example[[:space:]]*[0-9]*$/) { in_examples=1; next }
-                if (!in_examples) next
-
-                if (is_head(line, "input") || is_head(line, "sample input")) { example_idx++; if (in_output && example_idx > idx) exit; next }
-                if (is_head(line, "output") || is_head(line, "sample output")) { in_output=(example_idx==idx); next }
-                if (is_head(line, "note") || is_head(line, "explanation") || is_head(line, "constraints") || is_head(line, "examples")) { if (in_output) exit }
-
-                if (in_output) {
-                    if (tolower(trim(line))=="copy") next
-                    print line
-                    printed=1
-                }
-            }
-            END { if (!printed) exit 1 }
-        ' "$file"
+        extract_example_block "$file" "$sample_index" "output"
     else
         return 1
     fi
@@ -547,7 +557,7 @@ cmd_run() {
             local normalized_expected
             normalized_actual=$(normalize_output "$actual_output")
             normalized_expected=$(normalize_output "$expected_output")
-            
+
             printf '\n'
             print_info "Expected Output:"
             printf -- '---\n'
@@ -556,9 +566,9 @@ cmd_run() {
 
             # Compare outputs (simple comparison)
             if [ "$normalized_actual" = "$normalized_expected" ]; then
-                print_success "✓ Output matches expected!"
+                print_success "Output matches expected."
             else
-                print_warning "✗ Output does not match expected"
+                print_warning "Output does not match expected."
                 return 1
             fi
         else
@@ -601,18 +611,18 @@ cmd_test() {
 
 cmd_update() {
     print_info "Updating cf tool to latest version..."
-    
+
     # Verify we're in a git repository
     if [ ! -d "$REPO_ROOT/.git" ]; then
         error_exit "Not a git repository: $REPO_ROOT" 2
     fi
-    
+
     # Save current directory
     local original_dir="$PWD"
-    
+
     # Change to repository root
     cd "$REPO_ROOT" || error_exit "Failed to change to repository directory" 1
-    
+
     # Check for uncommitted changes
     if ! git diff-index --quiet HEAD -- 2>/dev/null; then
         print_warning "You have uncommitted changes in the repository"
@@ -624,20 +634,20 @@ cmd_update() {
             return 0
         fi
     fi
-    
+
     # Fetch and pull latest changes
     print_info "Fetching latest changes from remote..."
     if ! git fetch origin 2>&1; then
         error_exit "Failed to fetch from remote repository" 1
     fi
-    
+
     print_info "Pulling latest changes..."
     if ! git pull origin main 2>&1; then
         error_exit "Failed to pull latest changes" 1
     fi
-    
+
     print_success "Repository updated successfully"
-    
+
     # Run setup script if it exists
     if [ -f "$SCRIPTS_DIR/setup.sh" ]; then
         print_info "Running setup script..."
@@ -649,10 +659,10 @@ cmd_update() {
     else
         print_warning "Setup script not found, skipping setup"
     fi
-    
+
     # Return to original directory
     cd "$original_dir" || true
-    
+
     printf '\n'
     print_success "cf tool updated to latest version!"
     printf '%s\n' "Run 'cf help' to see all available commands"
@@ -683,14 +693,14 @@ EXAMPLES:
   cf test                     Run test suite
 
 FEATURES:
-  ✓ Auto-detects .cpp files in current directory
-  ✓ Auto-uses problem.txt when present
-  ✓ Supports multiple samples with --sample N
-  ✓ Timeout protection (5s) prevents infinite loops
-  ✓ Validates input and handles errors gracefully
-  ✓ Compares output with expected results
-  ✓ Cross-platform (Linux/macOS/WSL)
-  ✓ Production-grade reliability
+    - Auto-detects .cpp files in current directory
+    - Auto-uses problem.txt when present
+    - Supports multiple samples with --sample N
+    - Timeout protection (5s) prevents infinite loops
+    - Validates input and handles errors gracefully
+    - Compares output with expected results
+    - Cross-platform (Linux/macOS/WSL)
+    - Production-grade reliability
 
 ENVIRONMENT:
   CF_REPO_ROOT     Override repository root directory
