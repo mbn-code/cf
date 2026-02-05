@@ -99,45 +99,45 @@ check_dependencies() {
             return 1
         fi
     fi
-    
+
     # Verify diff command
     if ! command -v diff &> /dev/null; then
         print_failure "diff command not found"
         return 1
     fi
-    
+
     return 0
 }
 
 validate_input_output() {
     local input_file="$1"
     local output_file="$2"
-    
+
     if [[ ! -f "$input_file" ]]; then
         print_failure "Input file not found: $input_file"
         return 1
     fi
-    
+
     if [[ ! -f "$output_file" ]]; then
         print_failure "Expected output file not found: $output_file"
         return 1
     fi
-    
+
     return 0
 }
 
 compile_solution() {
     local source_file="$1"
     local binary_name="$2"
-    
+
     print_info "Compiling: $(basename "$source_file")"
-    
+
     if ! $COMPILER $CXXFLAGS $INCLUDE_FLAGS "$source_file" -o "$binary_name" 2>&1; then
         print_failure "Compilation failed for $source_file"
         ((COMPILATION_ERRORS++))
         return 1
     fi
-    
+
     print_success "Compiled successfully"
     return 0
 }
@@ -147,34 +147,34 @@ run_with_timeout() {
     local binary="$2"
     local input_file="$3"
     local output_file="$4"
-    
+
     local temp_output
     temp_output=$(mktemp)
     trap "rm -f $temp_output" RETURN
-    
+
     # Run with timeout
     if ! $TIMEOUT_CMD "$timeout_sec" "$binary" < "$input_file" > "$temp_output" 2>&1; then
         local exit_code=$?
-        
+
         # Exit code 124 = timeout
         if [[ $exit_code -eq 124 ]]; then
             print_failure "TIMEOUT (exceeded ${timeout_sec}s)"
             return 124
         fi
-        
+
         # Exit code 137 = killed (signal 9)
         if [[ $exit_code -eq 137 ]]; then
             print_failure "KILLED (possible memory limit exceeded)"
             return 137
         fi
-        
+
         # Check if output file is empty (runtime error)
         if [[ ! -s "$temp_output" ]]; then
             print_failure "RUNTIME ERROR (no output produced)"
             return 1
         fi
     fi
-    
+
     # Compare outputs with diff
     if diff -q "$output_file" "$temp_output" > /dev/null 2>&1; then
         print_success "OUTPUT MATCHES"
@@ -198,27 +198,27 @@ test_solution() {
     local input_file="$2"
     local output_file="$3"
     local timeout_sec="${4:-$DEFAULT_TIMEOUT}"
-    
+
     local problem_name
     problem_name=$(basename "$source_file" .cpp)
-    
+
     ((TESTS_RUN++))
-    
+
     print_info "Testing: $problem_name"
-    
+
     if ! validate_input_output "$input_file" "$output_file"; then
         ((TESTS_FAILED++))
         return 1
     fi
-    
+
     local binary_path
     binary_path="$BUILD_DIR/${problem_name}_test"
-    
+
     if ! compile_solution "$source_file" "$binary_path"; then
         ((TESTS_FAILED++))
         return 1
     fi
-    
+
     if ! run_with_timeout "$timeout_sec" "$binary_path" "$input_file" "$output_file"; then
         local result=$?
         if [[ $result -eq 124 || $result -eq 137 ]]; then
@@ -228,27 +228,41 @@ test_solution() {
         ((TESTS_FAILED++))
         return 1
     fi
-    
+
     ((TESTS_PASSED++))
     return 0
 }
 
 test_all_in_directory() {
     local test_dir="$1"
-    
+
     if [[ ! -d "$test_dir" ]]; then
         print_failure "Test directory not found: $test_dir"
         return 1
     fi
-    
+
     print_header "Running all tests in $test_dir"
-    
+
     find "$test_dir" -maxdepth 1 -name "*.cpp" -type f | sort | while read -r source_file; do
         test_solution "$source_file" \
             "${test_dir}/$(basename "$source_file" .cpp)_input.txt" \
             "${test_dir}/$(basename "$source_file" .cpp)_output.txt" \
             "$DEFAULT_TIMEOUT"
     done
+}
+
+run_parser_tests() {
+    if [[ -f "$TESTS_DIR/parser_test.sh" ]]; then
+        print_header "Parser Tests"
+        if ! bash "$TESTS_DIR/parser_test.sh"; then
+            print_failure "Parser tests failed"
+            return 1
+        fi
+        print_success "Parser tests passed"
+    else
+        print_warning "Parser test script not found: $TESTS_DIR/parser_test.sh"
+    fi
+    return 0
 }
 
 print_summary() {
@@ -259,7 +273,7 @@ print_summary() {
     echo -e "Tests failed:          ${RED}$TESTS_FAILED${NC}"
     echo "Compilation errors:    $COMPILATION_ERRORS"
     echo ""
-    
+
     if [[ $TESTS_FAILED -eq 0 && $COMPILATION_ERRORS -eq 0 ]]; then
         print_success "All tests passed!"
         return 0
@@ -309,7 +323,7 @@ main() {
     local output_file="$TESTS_DIR/example_output.txt"
     local timeout_sec="$DEFAULT_TIMEOUT"
     local problem_name=""
-    
+
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -344,15 +358,20 @@ main() {
                 ;;
         esac
     done
-    
+
     # Check dependencies
     if ! check_dependencies; then
         exit 2
     fi
-    
+
+    # Run parser tests
+    if ! run_parser_tests; then
+        exit 1
+    fi
+
     # Create build directory
     mkdir -p "$BUILD_DIR"
-    
+
     # Test specific problem or all
     if [[ -n "$problem_name" ]]; then
         local source_file="$SRC_DIR/${problem_name}.cpp"
@@ -364,7 +383,7 @@ main() {
     else
         test_solution "$SRC_DIR/template.cpp" "$input_file" "$output_file" "$timeout_sec"
     fi
-    
+
     print_summary
     exit_code=$?
     exit "$exit_code"

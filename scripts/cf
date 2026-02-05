@@ -32,9 +32,13 @@ set -euo pipefail
 
 # ==================== CONFIGURATION ====================
 
-# Determine repository root
+# Determine repository root (handle symlinks)
 if [ -f "${BASH_SOURCE[0]}" ]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SCRIPT_PATH="${BASH_SOURCE[0]}"
+    if command -v readlink &> /dev/null; then
+        SCRIPT_PATH="$(readlink -f "$SCRIPT_PATH" 2>/dev/null || printf '%s' "$SCRIPT_PATH")"
+    fi
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
     # If script is in the repo's scripts/ directory, use it
     if [ -f "$SCRIPT_DIR/../src/template.cpp" ]; then
         REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -58,7 +62,7 @@ if command -v g++ &> /dev/null; then
 elif command -v clang++ &> /dev/null; then
     COMPILER="clang++"
 else
-    echo "Error: No C++ compiler found. Install g++ or clang++." >&2
+    printf '%s\n' "Error: No C++ compiler found. Install g++ or clang++." >&2
     exit 1
 fi
 
@@ -81,24 +85,24 @@ VERBOSE=${CF_VERBOSE:-0}
 # ==================== HELPER FUNCTIONS ====================
 
 print_error() {
-    echo -e "${RED}✗ Error: $1${NC}" >&2
+    printf '%b\n' "${RED}✗ Error: $1${NC}" >&2
 }
 
 print_success() {
-    echo -e "${GREEN}✓ $1${NC}"
+    printf '%b\n' "${GREEN}✓ $1${NC}"
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠ $1${NC}"
+    printf '%b\n' "${YELLOW}⚠ $1${NC}"
 }
 
 print_info() {
-    echo -e "${BLUE}ℹ $1${NC}"
+    printf '%b\n' "${BLUE}ℹ $1${NC}"
 }
 
 print_debug() {
     if [ "$VERBOSE" -eq 1 ]; then
-        echo -e "${BLUE}[DEBUG] $1${NC}" >&2
+        printf '%b\n' "${BLUE}[DEBUG] $1${NC}" >&2
     fi
 }
 
@@ -152,30 +156,20 @@ safe_execute() {
     local binary="$1"
     local input_file="${2:-}"
     local timeout_sec="${EXEC_TIMEOUT}"
-    
+
     if check_timeout_cmd; then
         if [ -n "$input_file" ] && [ -f "$input_file" ]; then
-            timeout "$timeout_sec" "$binary" < "$input_file" 2>&1 || {
-                local exit_code=$?
-                if [ $exit_code -eq 124 ]; then
-                    print_error "Execution timeout (exceeded ${timeout_sec}s)"
-                    return 1
-                elif [ $exit_code -ne 0 ]; then
-                    print_error "Runtime error (exit code: $exit_code)"
-                    return 1
-                fi
-            }
+            timeout "$timeout_sec" "$binary" < "$input_file" 2>&1
         else
-            timeout "$timeout_sec" "$binary" 2>&1 || {
-                local exit_code=$?
-                if [ $exit_code -eq 124 ]; then
-                    print_error "Execution timeout (exceeded ${timeout_sec}s)"
-                    return 1
-                elif [ $exit_code -ne 0 ]; then
-                    print_error "Runtime error (exit code: $exit_code)"
-                    return 1
-                fi
-            }
+            timeout "$timeout_sec" "$binary" 2>&1
+        fi
+        local exit_code=$?
+        if [ $exit_code -eq 124 ]; then
+            print_error "Execution timeout (exceeded ${timeout_sec}s)"
+            return 1
+        elif [ $exit_code -ne 0 ]; then
+            print_error "Runtime error (exit code: $exit_code)"
+            return 1
         fi
     else
         if [ -n "$input_file" ] && [ -f "$input_file" ]; then
@@ -189,39 +183,56 @@ safe_execute() {
 
 # Compile with error reporting
 safe_compile() {
-    local source="$1"
-    local output="$2"
-    
-    print_debug "Compiling: $source -> $output"
-    
-    if ! $COMPILER $CXXFLAGS -I "$INCLUDE_DIR" "$source" -o "$output" 2>&1; then
-        print_error "Compilation failed for $(basename "$source")"
+    local output="$1"
+    shift
+    local sources=("$@")
+
+    print_debug "Compiling: ${sources[*]} -> $output"
+
+    if ! $COMPILER $CXXFLAGS -I "$INCLUDE_DIR" "${sources[@]}" -o "$output" 2>&1; then
+        print_error "Compilation failed"
         return 1
     fi
-    
+
     return 0
 }
 
 # Extract test input from problem description file
 extract_test_input() {
     local file="$1"
-    
+    local sample_index="${2:-1}"
+
     if [ ! -f "$file" ]; then
         print_debug "Problem file not found: $file"
         return 1
     fi
-    
+
     # Check if this looks like a problem description with Examples section
-    if grep -qi "Examples" "$file" 2>/dev/null; then
-        # Extract input between "Input" (after Examples) and "Output"
-        awk '
-            BEGIN { in_input = 0; in_example = 0 }
-            /Examples/ { in_example = 1; next }
-            in_example && /^Input$/ { in_input = 1; next }
-            in_example && /^Copy$/ && in_input { next }
-            in_example && in_input && /^Output$/ { exit }
-            in_example && in_input && /^Copy$/ { exit }
-            in_example && in_input && NF > 0 { print }
+    if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
+        # Extract the selected example input block after "Examples"
+        awk -v idx="$sample_index" '
+            function norm(s){ gsub(/\r/, "", s); return s }
+            function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+            function norm_head(s){ s=tolower(s); gsub(/[[:space:]]+/, " ", s); s=trim(s); return s }
+            function is_head(s, name){ s=norm_head(s); name=tolower(name); return (s==name || s==name":" || s==name" :") }
+            BEGIN { in_examples=0; in_input=0; printed=0; example_idx=0 }
+            {
+                line=norm($0)
+                if (!in_examples && line ~ /^[[:space:]]*$/) next
+                if (!in_examples && tolower(line) ~ /^examples?$/) { in_examples=1; next }
+                if (!in_examples && tolower(line) ~ /^example[[:space:]]*[0-9]*$/) { in_examples=1; next }
+                if (!in_examples) next
+
+                if (is_head(line, "input") || is_head(line, "sample input")) { example_idx++; in_input=(example_idx==idx); next }
+                if (is_head(line, "output") || is_head(line, "sample output")) { if (in_input) exit; next }
+
+                if (in_input) {
+                    if (tolower(trim(line))=="copy") next
+                    print line
+                    printed=1
+                }
+            }
+            END { if (!printed) exit 1 }
         ' "$file"
     else
         # Regular input file, return as-is
@@ -232,62 +243,123 @@ extract_test_input() {
 # Extract expected output from problem description file
 extract_expected_output() {
     local file="$1"
-    
+    local sample_index="${2:-1}"
+
     if [ ! -f "$file" ]; then
         return 1
     fi
-    
+
     # Check if this looks like a problem description with Examples section
-    if grep -qi "Examples" "$file" 2>/dev/null; then
-        # Extract output between "Output" (after Examples) and next section
-        awk '
-            BEGIN { in_output = 0; in_example = 0; blank_count = 0 }
-            /Examples/ { in_example = 1; next }
-            in_example && /^Output$/ { in_output = 1; next }
-            in_example && /^Copy$/ && in_output { next }
-            in_example && in_output && /^$/ { 
-                blank_count++
-                if (blank_count >= 2) exit
-                next
+    if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
+        # Extract the selected example output block after "Examples"
+        awk -v idx="$sample_index" '
+            function norm(s){ gsub(/\r/, "", s); return s }
+            function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+            function norm_head(s){ s=tolower(s); gsub(/[[:space:]]+/, " ", s); s=trim(s); return s }
+            function is_head(s, name){ s=norm_head(s); name=tolower(name); return (s==name || s==name":" || s==name" :") }
+            BEGIN { in_examples=0; in_output=0; printed=0; example_idx=0 }
+            {
+                line=norm($0)
+                if (!in_examples && line ~ /^[[:space:]]*$/) next
+                if (!in_examples && tolower(line) ~ /^examples?$/) { in_examples=1; next }
+                if (!in_examples && tolower(line) ~ /^example[[:space:]]*[0-9]*$/) { in_examples=1; next }
+                if (!in_examples) next
+
+                if (is_head(line, "input") || is_head(line, "sample input")) { example_idx++; if (in_output && example_idx > idx) exit; next }
+                if (is_head(line, "output") || is_head(line, "sample output")) { in_output=(example_idx==idx); next }
+                if (is_head(line, "note") || is_head(line, "explanation") || is_head(line, "constraints") || is_head(line, "examples")) { if (in_output) exit }
+
+                if (in_output) {
+                    if (tolower(trim(line))=="copy") next
+                    print line
+                    printed=1
+                }
             }
-            in_example && in_output && /^(Note|Explanation|Input)/ { exit }
-            in_example && in_output && NF > 0 { print; blank_count = 0 }
+            END { if (!printed) exit 1 }
         ' "$file"
     else
         return 1
     fi
 }
 
+# Count sample inputs in a problem statement
+count_samples() {
+    local file="$1"
+
+    if [ ! -f "$file" ]; then
+        return 0
+    fi
+
+    if ! grep -qi "Examples\|Example" "$file" 2>/dev/null; then
+        printf '0'
+        return 0
+    fi
+
+    awk '
+        function norm(s){ gsub(/\r/, "", s); return s }
+        function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+        function norm_head(s){ s=tolower(s); gsub(/[[:space:]]+/, " ", s); s=trim(s); return s }
+        function is_head(s, name){ s=norm_head(s); name=tolower(name); return (s==name || s==name":" || s==name" :") }
+        BEGIN { in_examples=0; count=0 }
+        {
+            line=norm($0)
+            if (!in_examples && line ~ /^[[:space:]]*$/) next
+            if (!in_examples && tolower(line) ~ /^examples?$/) { in_examples=1; next }
+            if (!in_examples && tolower(line) ~ /^example[[:space:]]*[0-9]*$/) { in_examples=1; next }
+            if (!in_examples) next
+
+            if (is_head(line, "input") || is_head(line, "sample input")) { count++ }
+        }
+        END { print count }
+    ' "$file"
+}
+
+# Normalize output for comparison: strip \r, trim blank edges, trim trailing spaces per line
+normalize_output() {
+    printf '%s' "$1" | tr -d '\r' | awk '
+        { sub(/[[:space:]]+$/, "", $0); lines[NR]=$0 }
+        END {
+            start=1; end=NR
+            while (start<=NR && lines[start] ~ /^[[:space:]]*$/) start++
+            while (end>=start && lines[end] ~ /^[[:space:]]*$/) end--
+            for (i=start; i<=end; i++) {
+                if (i>start) printf "\n"
+                printf "%s", lines[i]
+            }
+        }
+    '
+}
+
 # ==================== TEMPLATE COMMAND ====================
 
 cmd_template() {
     local problem_name="$1"
-    
+
     if [ -z "$problem_name" ]; then
         print_error "Usage: cf template <name>"
-        echo "Example: cf template 1000A"
+        printf '%s\n' "Example: cf template 1000A"
         return 1
     fi
-    
+
     # Validate problem name format
     if ! [[ "$problem_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         print_error "Invalid problem name: $problem_name (use alphanumeric, dash, or underscore)"
         return 1
     fi
-    
+
     # Create problem directory in current working directory
     local problem_dir="$PWD/$problem_name"
-    
+
     if dir_exists "$problem_dir"; then
         print_info "Problem directory already exists: $problem_dir"
     else
         mkdir -p "$problem_dir" || error_exit "Failed to create directory: $problem_dir" 1
         print_success "Created directory: $problem_dir"
     fi
-    
+
     # Copy template to solution.cpp
     local solution_file="$problem_dir/solution.cpp"
-    
+
     if [ -f "$solution_file" ]; then
         print_info "Solution already exists: $solution_file"
     else
@@ -298,10 +370,10 @@ cmd_template() {
             error_exit "Template file not found: $SRC_DIR/template.cpp" 2
         fi
     fi
-    
+
     # Create problem.txt file
     local problem_file="$problem_dir/problem.txt"
-    
+
     if [ -f "$problem_file" ]; then
         print_info "Problem file already exists: $problem_file"
     else
@@ -318,135 +390,182 @@ Output
 EOF
         print_success "Created problem file: $problem_file"
     fi
-    
+
     # Compile to verify setup
     print_info "Verifying compilation..."
     local output_file
     output_file=$(mktemp) || error_exit "Failed to create temp file" 1
     trap "rm -f $output_file" RETURN
-    
-    if safe_compile "$solution_file" "$output_file"; then
+
+    if safe_compile "$output_file" "$solution_file"; then
         print_success "Compilation verified"
     else
         error_exit "Compilation failed. Check your C++ compiler." 1
     fi
-    
+
     # Open files in VS Code if available
     if command -v code &> /dev/null; then
         print_info "Opening files in VS Code..."
         code "$problem_file" "$solution_file" 2>/dev/null || true
         print_success "Opened in VS Code"
     fi
-    
-    echo ""
-    echo "Next steps:"
-    echo "  1. Paste problem statement in $problem_file"
-    echo "  2. Edit solution in $solution_file"
-    echo "  3. cd $problem_name && cf problem.txt"
+
+    printf '\n'
+    printf '%s\n' "Next steps:"
+    printf '%s\n' "  1. Paste problem statement in $problem_file"
+    printf '%s\n' "  2. Edit solution in $solution_file"
+    printf '%s\n' "  3. cd $problem_name && cf problem.txt"
 }
 
 # ==================== RUN COMMAND ====================
 
 cmd_run() {
-    local input_arg="$1"
-    
-    # Find .cpp file in current directory
-    local cpp_file=""
-    
-    # First, look for solution.cpp in current directory
-    if [ -f "$PWD/solution.cpp" ]; then
-        cpp_file="$PWD/solution.cpp"
-    else
-        # Otherwise, find any .cpp file in current directory
-        cpp_file=$(find "$PWD" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null | head -1)
+    local input_arg=""
+    local sample_index="1"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --sample|-s)
+                shift || true
+                if [ -z "${1:-}" ]; then
+                    error_exit "Missing value for --sample" 2
+                fi
+                sample_index="$1"
+                ;;
+            *)
+                if [ -z "$input_arg" ]; then
+                    input_arg="$1"
+                elif [[ "$1" =~ ^[0-9]+$ ]] && [ "$sample_index" = "1" ]; then
+                    sample_index="$1"
+                else
+                    print_warning "Ignoring extra argument: $1"
+                fi
+                ;;
+        esac
+        shift || true
+    done
+
+    if ! [[ "$sample_index" =~ ^[0-9]+$ ]] || [ "$sample_index" -lt 1 ]; then
+        error_exit "Invalid sample index: $sample_index" 2
     fi
-    
-    if [ -z "$cpp_file" ]; then
+
+    if [ -z "$input_arg" ] && [ -f "$PWD/problem.txt" ]; then
+        input_arg="$PWD/problem.txt"
+    fi
+
+    # Find .cpp files in current directory
+    mapfile -t cpp_files < <(find "$PWD" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
+    if [ ${#cpp_files[@]} -eq 0 ]; then
         error_exit "No C++ file found in current directory ($PWD)" 2
     fi
-    
-    print_info "Using: $(basename "$cpp_file")"
-    
+
+    print_info "Using: ${#cpp_files[@]} source file(s)"
+
     # Prepare output file
     local output_file
     output_file=$(mktemp) || error_exit "Failed to create temp file" 1
     trap "rm -f $output_file" RETURN
-    
+
     # Compile
     print_info "Compiling with $COMPILER..."
-    if ! safe_compile "$cpp_file" "$output_file"; then
+    if ! safe_compile "$output_file" "${cpp_files[@]}"; then
         return 1
     fi
     print_success "Compiled successfully"
-    
+
     # Prepare input
     local input_data=""
     local expected_output=""
     local is_problem_file=false
     local temp_input=""
-    
+
     if [ -n "$input_arg" ]; then
         if [ -f "$input_arg" ]; then
             # Input is a file - extract test input intelligently
             print_info "Running with input from: $input_arg"
-            input_data=$(extract_test_input "$input_arg") || true
-            
+
             # Check if this is a problem file and extract expected output
-            if grep -qi "Examples" "$input_arg" 2>/dev/null; then
+            if grep -qi "Examples\|Example" "$input_arg" 2>/dev/null; then
                 is_problem_file=true
-                expected_output=$(extract_expected_output "$input_arg") || true
+                local sample_count
+                sample_count=$(count_samples "$input_arg")
+                if [ "$sample_count" -gt 0 ] && [ "$sample_index" -gt "$sample_count" ]; then
+                    print_warning "Requested sample #$sample_index, but only $sample_count found; using sample #1"
+                    sample_index=1
+                fi
+                expected_output=$(extract_expected_output "$input_arg" "$sample_index") || true
             fi
-            
-            # Create temp input file
+
+            # Create temp input file and write extracted input directly
             temp_input=$(mktemp) || error_exit "Failed to create temp input file" 1
-            echo -n "$input_data" > "$temp_input"
+            if ! extract_test_input "$input_arg" "$sample_index" > "$temp_input"; then
+                print_warning "No sample input found in examples; falling back to interactive stdin"
+                rm -f "$temp_input"
+                temp_input=""
+            fi
             trap "rm -f $output_file $temp_input" RETURN
         else
             # Input is a string (possibly with escaped newlines)
             print_info "Running with inline input"
             # Interpret escape sequences
             input_data=$(printf "%b" "$input_arg") || true
-            
+
             # Create temp input file
             temp_input=$(mktemp) || error_exit "Failed to create temp input file" 1
-            echo -n "$input_data" > "$temp_input"
+            printf '%s' "$input_data" > "$temp_input"
             trap "rm -f $output_file $temp_input" RETURN
         fi
     else
         print_info "Running with stdin (pipe input or interactive)"
     fi
-    
+
     # Execute with input
-    echo ""
+    printf '\n'
+    if [ -n "$temp_input" ]; then
+        print_info "Input Used:"
+        printf -- '---\n'
+        cat "$temp_input"
+        printf -- '\n---\n'
+    fi
     print_info "Your Output:"
-    echo "---"
-    
+    printf -- '---\n'
+
     local actual_output=""
     if [ -n "$temp_input" ]; then
         actual_output=$(safe_execute "$output_file" "$temp_input") || return 1
-        echo "$actual_output"
+        printf '%s' "$actual_output"
     else
         safe_execute "$output_file" || return 1
     fi
-    
-    echo "---"
-    
+
+    printf -- '\n---\n'
+
     # Display expected output if available
-    if [ "$is_problem_file" = true ] && [ -n "$expected_output" ]; then
-        echo ""
-        print_info "Expected Output:"
-        echo "---"
-        echo "$expected_output"
-        echo "---"
-        
-        # Compare outputs (simple comparison)
-        if [ "$actual_output" = "$expected_output" ]; then
-            print_success "✓ Output matches expected!"
+    if [ "$is_problem_file" = true ]; then
+        if [ -n "$expected_output" ]; then
+            local normalized_actual
+            local normalized_expected
+            normalized_actual=$(normalize_output "$actual_output")
+            normalized_expected=$(normalize_output "$expected_output")
+            
+            printf '\n'
+            print_info "Expected Output:"
+            printf -- '---\n'
+            printf '%s' "$normalized_expected"
+            printf -- '\n---\n'
+
+            # Compare outputs (simple comparison)
+            if [ "$normalized_actual" = "$normalized_expected" ]; then
+                print_success "✓ Output matches expected!"
+            else
+                print_warning "✗ Output does not match expected"
+                return 1
+            fi
         else
-            print_warning "✗ Output does not match expected"
+            print_warning "No sample output detected; skipping compare"
         fi
     fi
-    
+
     print_success "Execution complete"
 }
 
@@ -454,21 +573,21 @@ cmd_run() {
 
 cmd_test() {
     print_info "Running test suite..."
-    
+
     if [ ! -f "$SCRIPTS_DIR/test.sh" ]; then
         print_warning "Test script not found: $SCRIPTS_DIR/test.sh"
         print_info "Using fallback: testing template.cpp"
-        
+
         if [ ! -f "$SRC_DIR/template.cpp" ]; then
             error_exit "Template file not found" 2
         fi
-        
+
         # Basic test
         local output_file
         output_file=$(mktemp) || error_exit "Failed to create temp file" 1
         trap "rm -f $output_file" RETURN
-        
-        if safe_compile "$SRC_DIR/template.cpp" "$output_file"; then
+
+        if safe_compile "$output_file" "$SRC_DIR/template.cpp"; then
             print_success "Template compiles successfully"
         else
             return 1
@@ -476,6 +595,67 @@ cmd_test() {
     else
         bash "$SCRIPTS_DIR/test.sh"
     fi
+}
+
+# ==================== UPDATE COMMAND ====================
+
+cmd_update() {
+    print_info "Updating cf tool to latest version..."
+    
+    # Verify we're in a git repository
+    if [ ! -d "$REPO_ROOT/.git" ]; then
+        error_exit "Not a git repository: $REPO_ROOT" 2
+    fi
+    
+    # Save current directory
+    local original_dir="$PWD"
+    
+    # Change to repository root
+    cd "$REPO_ROOT" || error_exit "Failed to change to repository directory" 1
+    
+    # Check for uncommitted changes
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+        print_warning "You have uncommitted changes in the repository"
+        printf '%s' "Continue with update? (y/N): "
+        read -r response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            print_info "Update cancelled"
+            cd "$original_dir" || true
+            return 0
+        fi
+    fi
+    
+    # Fetch and pull latest changes
+    print_info "Fetching latest changes from remote..."
+    if ! git fetch origin 2>&1; then
+        error_exit "Failed to fetch from remote repository" 1
+    fi
+    
+    print_info "Pulling latest changes..."
+    if ! git pull origin main 2>&1; then
+        error_exit "Failed to pull latest changes" 1
+    fi
+    
+    print_success "Repository updated successfully"
+    
+    # Run setup script if it exists
+    if [ -f "$SCRIPTS_DIR/setup.sh" ]; then
+        print_info "Running setup script..."
+        if bash "$SCRIPTS_DIR/setup.sh"; then
+            print_success "Setup completed successfully"
+        else
+            print_warning "Setup script encountered issues, but update completed"
+        fi
+    else
+        print_warning "Setup script not found, skipping setup"
+    fi
+    
+    # Return to original directory
+    cd "$original_dir" || true
+    
+    printf '\n'
+    print_success "cf tool updated to latest version!"
+    printf '%s\n' "Run 'cf help' to see all available commands"
 }
 
 # ==================== HELP COMMAND ====================
@@ -486,20 +666,26 @@ cf - Codeforces CLI Tool
 
 USAGE:
   cf <command> [args]
+  cf [input] [--sample N]
 
 COMMANDS:
   template <name>    Create new problem template
   test               Run test suite with validation
+  update             Update cf tool to latest version
   help               Show this help message
 
 EXAMPLES:
   cf template 1000A           Create new problem 1000A
   cf problem.txt              Run solution with input from file
+  cf problem.txt 2            Run sample #2 from problem.txt
+  cf --sample 2               Run sample #2 from problem.txt (auto)
   cf "5\n1 2 3 4 5"           Run solution with inline input
   cf test                     Run test suite
 
 FEATURES:
   ✓ Auto-detects .cpp files in current directory
+  ✓ Auto-uses problem.txt when present
+  ✓ Supports multiple samples with --sample N
   ✓ Timeout protection (5s) prevents infinite loops
   ✓ Validates input and handles errors gracefully
   ✓ Compares output with expected results
@@ -527,7 +713,7 @@ main() {
     # Parse command
     local command="${1:-}"
     shift || true
-    
+
     case "$command" in
         template)
             # Validate repo structure for template command
@@ -543,20 +729,29 @@ main() {
             fi
             cmd_test "$@"
             ;;
+        update)
+            cmd_update "$@"
+            ;;
         help|--help|-h)
             cmd_help
             ;;
         "")
-            print_error "Usage: cf <command> [args]"
-            echo ""
-            echo "Commands:"
-            echo "  cf template <name>     Create new problem template"
-            echo "  cf [input]             Compile and run solution"
-            echo "  cf test                Run test suite"
-            echo "  cf help                Show help"
-            echo ""
-            echo "For more information: cf help"
-            return 1
+            # Auto-detect problem.txt if no args given
+            if [ -f "$PWD/problem.txt" ]; then
+                cmd_run
+            else
+                print_error "Usage: cf <command> [args]"
+                printf '\n'
+                printf '%s\n' "Commands:"
+                printf '%s\n' "  cf template <name>     Create new problem template"
+                printf '%s\n' "  cf [input]             Compile and run solution"
+                printf '%s\n' "  cf test                Run test suite"
+                printf '%s\n' "  cf update              Update to latest version"
+                printf '%s\n' "  cf help                Show help"
+                printf '\n'
+                printf '%s\n' "For more information: cf help"
+                return 1
+            fi
             ;;
         *)
             cmd_run "$command" "$@"
