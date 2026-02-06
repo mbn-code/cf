@@ -1,4 +1,4 @@
-# cf - Production-Grade Codeforces Toolkit
+# cf - Codeforces Toolkit
 
 A robust, industry-standard C++ competitive programming environment for Codeforces and similar platforms. Designed for **reliability** and **real-world usage** with built-in safety features, comprehensive testing, and production-grade error handling.
 
