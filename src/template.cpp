@@ -96,7 +96,7 @@ const double PI = acos(-1.0);
  */
 bool validateRange(ll value, ll min_val, ll max_val) {
     if (value < min_val || value > max_val) {
-        cerr << "Error: Value " << value << " out of range [" 
+        cerr << "Error: Value " << value << " out of range ["
              << min_val << ", " << max_val << "]" << endl;
         return false;
     }
@@ -112,7 +112,7 @@ bool validateRange(ll value, ll min_val, ll max_val) {
  */
 bool validateVectorSize(const vi& v, int min_size, int max_size) {
     if (sz(v) < min_size || sz(v) > max_size) {
-        cerr << "Error: Vector size " << sz(v) << " out of range [" 
+        cerr << "Error: Vector size " << sz(v) << " out of range ["
              << min_size << ", " << max_size << "]" << endl;
         return false;
     }
@@ -203,7 +203,7 @@ void printVector(const vi& v) {
 
 /**
  * @brief Solve the problem
- * 
+ *
  * IMPORTANT REMINDERS:
  * - Update the constraint ranges below based on your problem!
  * - Always validate n before creating arrays of size n
@@ -226,7 +226,7 @@ void solve() {
 // ==================== MAIN ENTRY POINT ====================
 int main() {
     FAST_IO;
-    
+
     try {
         // For multiple test cases, uncomment:
         // int t;
@@ -235,10 +235,10 @@ int main() {
         // while (t--) {
         //     solve();
         // }
-        
+
         // For single test case:
         solve();
-        
+
         return 0;
     } catch (const exception& e) {
         cerr << "Exception: " << e.what() << endl;
