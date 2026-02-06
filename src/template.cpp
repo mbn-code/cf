@@ -245,27 +245,3 @@ int main() {
         return 1;
     }
 }
-
-// ==================== EXAMPLE INPUT/OUTPUT ====================
-/*
-
-Example 1:
-Input:
-5
-1 2 3 4 5
-
-Output:
-15
-
-Explanation:
-Sum of array = 1 + 2 + 3 + 4 + 5 = 15
-
-EDGE CASES TO TEST:
-1. Minimum size (n=1)
-2. Maximum size (n=100000)
-3. All zeros
-4. All maximum values
-5. Mix of positive/negative (if applicable)
-6. Large numbers causing overflow (use long long!)
-
-*/
