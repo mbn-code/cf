@@ -46,7 +46,7 @@ A robust, industry-standard C++ competitive programming environment for Codeforc
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/cf.git
+git clone https://github.com/mbn-code/cf.git
 cd cf
 
 # Run setup script (installs compiler, tools, and configures globally)
