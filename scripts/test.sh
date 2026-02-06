@@ -134,7 +134,7 @@ compile_solution() {
 
     if ! $COMPILER $CXXFLAGS $INCLUDE_FLAGS "$source_file" -o "$binary_name" 2>&1; then
         print_failure "Compilation failed for $source_file"
-        ((COMPILATION_ERRORS++))
+        COMPILATION_ERRORS=$((COMPILATION_ERRORS+1))
         return 1
     fi
 
@@ -202,12 +202,12 @@ test_solution() {
     local problem_name
     problem_name=$(basename "$source_file" .cpp)
 
-    ((TESTS_RUN++))
+    TESTS_RUN=$((TESTS_RUN+1))
 
     print_info "Testing: $problem_name"
 
     if ! validate_input_output "$input_file" "$output_file"; then
-        ((TESTS_FAILED++))
+        TESTS_FAILED=$((TESTS_FAILED+1))
         return 1
     fi
 
@@ -215,21 +215,21 @@ test_solution() {
     binary_path="$BUILD_DIR/${problem_name}_test"
 
     if ! compile_solution "$source_file" "$binary_path"; then
-        ((TESTS_FAILED++))
+        TESTS_FAILED=$((TESTS_FAILED+1))
         return 1
     fi
 
     if ! run_with_timeout "$timeout_sec" "$binary_path" "$input_file" "$output_file"; then
         local result=$?
         if [[ $result -eq 124 || $result -eq 137 ]]; then
-            ((TESTS_FAILED++))
+            TESTS_FAILED=$((TESTS_FAILED+1))
             return 1
         fi
-        ((TESTS_FAILED++))
+        TESTS_FAILED=$((TESTS_FAILED+1))
         return 1
     fi
 
-    ((TESTS_PASSED++))
+    TESTS_PASSED=$((TESTS_PASSED+1))
     return 0
 }
 
@@ -265,6 +265,21 @@ run_parser_tests() {
     return 0
 }
 
+run_shellcheck() {
+    if ! command -v shellcheck &> /dev/null; then
+        print_warning "shellcheck not found; skipping shell lint"
+        return 0
+    fi
+
+    print_header "ShellCheck"
+    if ! shellcheck "$PROJECT_ROOT/scripts/cf" "$PROJECT_ROOT/scripts/test.sh"; then
+        print_failure "ShellCheck reported issues"
+        return 1
+    fi
+    print_success "ShellCheck passed"
+    return 0
+}
+
 print_summary() {
     echo ""
     print_header "Test Summary"
@@ -293,6 +308,7 @@ Usage:
   bash scripts/test.sh -i input.txt -o output.txt  # Custom input/output
   bash scripts/test.sh -t 10                       # Set timeout to 10s
   bash scripts/test.sh -v                          # Verbose mode (show diffs)
+    bash scripts/test.sh --shellcheck                # Run shellcheck on scripts
   bash scripts/test.sh -h                          # Show this help
 
 Options:
@@ -300,6 +316,7 @@ Options:
   -o, --output FILE       Output file (default: tests/example_output.txt)
   -t, --timeout SEC       Timeout in seconds (default: 5s)
   -v, --verbose           Show detailed output mismatches
+    -s, --shellcheck        Run shellcheck on scripts
   -h, --help              Show this message
 
 Examples:
@@ -323,6 +340,7 @@ main() {
     local output_file="$TESTS_DIR/example_output.txt"
     local timeout_sec="$DEFAULT_TIMEOUT"
     local problem_name=""
+    local run_shellcheck_flag=0
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -347,6 +365,10 @@ main() {
                 timeout_sec="$2"
                 shift 2
                 ;;
+            -s|--shellcheck)
+                run_shellcheck_flag=1
+                shift
+                ;;
             -*)
                 print_failure "Unknown option: $1"
                 show_help
@@ -367,6 +389,12 @@ main() {
     # Run parser tests
     if ! run_parser_tests; then
         exit 1
+    fi
+
+    if [[ $run_shellcheck_flag -eq 1 ]]; then
+        if ! run_shellcheck; then
+            exit 1
+        fi
     fi
 
     # Create build directory

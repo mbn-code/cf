@@ -211,7 +211,16 @@ void printVector(const vi& v) {
  * - Test with edge cases: n=1, n=max, all zeros, all max values
  */
 void solve() {
-    
+    int n = readInt(1, 1000000);
+    vi v = readVector(n, INT_MIN, INT_MAX);
+    ll sum = 0;
+    for (int x : v) {
+        if (!canAdd(sum, x)) {
+            exit(1);
+        }
+        sum += x;
+    }
+    cout << sum << el;
 }
 
 // ==================== MAIN ENTRY POINT ====================

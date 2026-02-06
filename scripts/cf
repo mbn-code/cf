@@ -67,10 +67,10 @@ else
 fi
 
 # Compiler flags for competitive programming
-CXXFLAGS="-std=c++23 -O2 -Wall -Wextra"
+CXXFLAGS_DEFAULT="-std=c++23 -O2 -Wall -Wextra"
 
 # Execution timeout (seconds)
-EXEC_TIMEOUT=5
+EXEC_TIMEOUT_DEFAULT=5
 
 # Color codes
 RED='\033[0;31m'
@@ -81,6 +81,25 @@ NC='\033[0m'
 
 # Logging
 VERBOSE=${CF_VERBOSE:-0}
+
+# Exit codes
+EXIT_USAGE=2
+EXIT_IO=3
+EXIT_COMPILE=4
+EXIT_RUNTIME=5
+EXIT_UPDATE=6
+
+# Config overrides (optional)
+CF_CONFIG_FILE="${CF_CONFIG:-$REPO_ROOT/.cfconfig}"
+if [ -f "$CF_CONFIG_FILE" ]; then
+    # shellcheck disable=SC1090
+    . "$CF_CONFIG_FILE"
+fi
+
+# Effective configuration
+CXXFLAGS="${CF_CXXFLAGS:-$CXXFLAGS_DEFAULT}"
+EXEC_TIMEOUT="${CF_TIMEOUT:-$EXEC_TIMEOUT_DEFAULT}"
+BUILD_CACHE_DIR="${CF_BUILD_CACHE_DIR:-$BUILD_DIR/.cache}"
 
 # ==================== HELPER FUNCTIONS ====================
 
@@ -106,6 +125,10 @@ print_debug() {
     fi
 }
 
+is_tty() {
+    [ -t 0 ] && [ -t 1 ]
+}
+
 # Error handling with context
 error_exit() {
     local msg="$1"
@@ -117,14 +140,14 @@ error_exit() {
 # Validate file exists
 validate_file() {
     if [ ! -f "$1" ]; then
-        error_exit "File not found: $1" 2
+        error_exit "File not found: $1" "$EXIT_IO"
     fi
 }
 
 # Validate directory exists
 validate_dir() {
     if [ ! -d "$1" ]; then
-        error_exit "Directory not found: $1" 2
+        error_exit "Directory not found: $1" "$EXIT_IO"
     fi
 }
 
@@ -142,13 +165,52 @@ dir_exists() {
 # Check for timeout command availability
 check_timeout_cmd() {
     if command -v timeout &> /dev/null; then
+        TIMEOUT_CMD="timeout"
         return 0
     elif command -v gtimeout &> /dev/null; then
+        TIMEOUT_CMD="gtimeout"
         return 0
     else
         print_warning "timeout command not found; execution timeout protection disabled"
+        if command -v brew &> /dev/null; then
+            print_info "Install on macOS: brew install coreutils"
+        fi
         return 1
     fi
+}
+
+# Cleanup management (single trap)
+CLEANUP_ITEMS=()
+add_cleanup() {
+    CLEANUP_ITEMS+=("$1")
+}
+run_cleanup() {
+    local item
+    for item in "${CLEANUP_ITEMS[@]}"; do
+        rm -f "$item" 2>/dev/null || true
+    done
+}
+trap 'run_cleanup' RETURN
+
+# Hash sources for build cache
+compute_sources_hash() {
+    local sources=("$@")
+    local hash_cmd=""
+    if command -v sha256sum &> /dev/null; then
+        hash_cmd="sha256sum"
+    elif command -v shasum &> /dev/null; then
+        hash_cmd="shasum -a 256"
+    else
+        return 1
+    fi
+
+    {
+        printf '%s\n' "$CXXFLAGS"
+        for s in "${sources[@]}"; do
+            printf '%s\n' "$s"
+            cat "$s"
+        done
+    } | eval "$hash_cmd" | awk '{print $1}'
 }
 
 # Safe execution with timeout
@@ -159,9 +221,9 @@ safe_execute() {
 
     if check_timeout_cmd; then
         if [ -n "$input_file" ] && [ -f "$input_file" ]; then
-            timeout "$timeout_sec" "$binary" < "$input_file" 2>&1
+            "$TIMEOUT_CMD" "$timeout_sec" "$binary" < "$input_file" 2>&1
         else
-            timeout "$timeout_sec" "$binary" 2>&1
+            "$TIMEOUT_CMD" "$timeout_sec" "$binary" 2>&1
         fi
         local exit_code=$?
         if [ $exit_code -eq 124 ]; then
@@ -363,7 +425,7 @@ cmd_template() {
     if dir_exists "$problem_dir"; then
         print_info "Problem directory already exists: $problem_dir"
     else
-        mkdir -p "$problem_dir" || error_exit "Failed to create directory: $problem_dir" 1
+        mkdir -p "$problem_dir" || error_exit "Failed to create directory: $problem_dir" "$EXIT_IO"
         print_success "Created directory: $problem_dir"
     fi
 
@@ -374,10 +436,10 @@ cmd_template() {
         print_info "Solution already exists: $solution_file"
     else
         if [ -f "$SRC_DIR/template.cpp" ]; then
-            cp "$SRC_DIR/template.cpp" "$solution_file" || error_exit "Failed to copy template" 1
+            cp "$SRC_DIR/template.cpp" "$solution_file" || error_exit "Failed to copy template" "$EXIT_IO"
             print_success "Created solution: $solution_file"
         else
-            error_exit "Template file not found: $SRC_DIR/template.cpp" 2
+            error_exit "Template file not found: $SRC_DIR/template.cpp" "$EXIT_IO"
         fi
     fi
 
@@ -387,7 +449,7 @@ cmd_template() {
     if [ -f "$problem_file" ]; then
         print_info "Problem file already exists: $problem_file"
     else
-        cat > "$problem_file" << 'EOF' || error_exit "Failed to create problem file" 1
+        cat > "$problem_file" << 'EOF' || error_exit "Failed to create problem file" "$EXIT_IO"
 # Paste the problem statement here from Codeforces
 
 Examples
@@ -404,13 +466,13 @@ EOF
     # Compile to verify setup
     print_info "Verifying compilation..."
     local output_file
-    output_file=$(mktemp) || error_exit "Failed to create temp file" 1
-    trap "rm -f $output_file" RETURN
+    output_file=$(mktemp) || error_exit "Failed to create temp file" "$EXIT_IO"
+    add_cleanup "$output_file"
 
     if safe_compile "$output_file" "$solution_file"; then
         print_success "Compilation verified"
     else
-        error_exit "Compilation failed. Check your C++ compiler." 1
+        error_exit "Compilation failed. Check your C++ compiler." "$EXIT_COMPILE"
     fi
 
     # Open files in VS Code if available
@@ -432,20 +494,37 @@ EOF
 cmd_run() {
     local input_arg=""
     local sample_index="1"
+    local use_stdin=0
+    local sample_set=0
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --sample|-s)
                 shift || true
                 if [ -z "${1:-}" ]; then
-                    error_exit "Missing value for --sample" 2
+                    error_exit "Missing value for --sample" "$EXIT_USAGE"
                 fi
                 sample_index="$1"
+                sample_set=1
+                ;;
+            --input|--file|-i)
+                shift || true
+                if [ -z "${1:-}" ]; then
+                    error_exit "Missing value for --input" "$EXIT_USAGE"
+                fi
+                input_arg="$1"
+                ;;
+            --stdin)
+                use_stdin=1
+                ;;
+            --help|-h)
+                cmd_help
+                return 0
                 ;;
             *)
                 if [ -z "$input_arg" ]; then
                     input_arg="$1"
-                elif [[ "$1" =~ ^[0-9]+$ ]] && [ "$sample_index" = "1" ]; then
+                elif [[ "$1" =~ ^[0-9]+$ ]] && [ "$sample_set" -eq 0 ] && [ -f "$input_arg" ]; then
                     sample_index="$1"
                 else
                     print_warning "Ignoring extra argument: $1"
@@ -456,40 +535,56 @@ cmd_run() {
     done
 
     if ! [[ "$sample_index" =~ ^[0-9]+$ ]] || [ "$sample_index" -lt 1 ]; then
-        error_exit "Invalid sample index: $sample_index" 2
+        error_exit "Invalid sample index: $sample_index" "$EXIT_USAGE"
     fi
 
-    if [ -z "$input_arg" ] && [ -f "$PWD/problem.txt" ]; then
+    if [ "$use_stdin" -eq 0 ] && [ -z "$input_arg" ] && [ -f "$PWD/problem.txt" ]; then
         input_arg="$PWD/problem.txt"
     fi
 
     # Find .cpp files in current directory
     mapfile -t cpp_files < <(find "$PWD" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
     if [ ${#cpp_files[@]} -eq 0 ]; then
-        error_exit "No C++ file found in current directory ($PWD)" 2
+        error_exit "No C++ file found in current directory ($PWD)" "$EXIT_USAGE"
     fi
 
     print_info "Using: ${#cpp_files[@]} source file(s)"
 
-    # Prepare output file
+    # Prepare output file (build cache)
     local output_file
-    output_file=$(mktemp) || error_exit "Failed to create temp file" 1
-    trap "rm -f $output_file" RETURN
+    local sources_hash=""
+    sources_hash=$(compute_sources_hash "${cpp_files[@]}") || true
+    if [ -n "$sources_hash" ]; then
+        mkdir -p "$BUILD_CACHE_DIR" || error_exit "Failed to create build cache directory" "$EXIT_IO"
+        output_file="$BUILD_CACHE_DIR/$sources_hash"
+    else
+        output_file=$(mktemp) || error_exit "Failed to create temp file" "$EXIT_IO"
+        add_cleanup "$output_file"
+    fi
 
     # Compile
-    print_info "Compiling with $COMPILER..."
-    if ! safe_compile "$output_file" "${cpp_files[@]}"; then
-        return 1
+    if [ -x "$output_file" ] && [ -n "$sources_hash" ] && [ "${CF_FORCE_REBUILD:-0}" -ne 1 ]; then
+        print_info "Using cached build"
+    else
+        print_info "Compiling with $COMPILER..."
+        if ! safe_compile "$output_file" "${cpp_files[@]}"; then
+            rm -f "$output_file" 2>/dev/null || true
+            return 1
+        fi
+        chmod +x "$output_file" 2>/dev/null || true
+        print_success "Compiled successfully"
     fi
-    print_success "Compiled successfully"
 
     # Prepare input
     local input_data=""
     local expected_output=""
     local is_problem_file=false
     local temp_input=""
+    local compare_enabled=false
 
-    if [ -n "$input_arg" ]; then
+    if [ "$use_stdin" -eq 1 ]; then
+        print_info "Running with stdin (forced)"
+    elif [ -n "$input_arg" ]; then
         if [ -f "$input_arg" ]; then
             # Input is a file - extract test input intelligently
             print_info "Running with input from: $input_arg"
@@ -507,13 +602,31 @@ cmd_run() {
             fi
 
             # Create temp input file and write extracted input directly
-            temp_input=$(mktemp) || error_exit "Failed to create temp input file" 1
+            temp_input=$(mktemp) || error_exit "Failed to create temp input file" "$EXIT_IO"
             if ! extract_test_input "$input_arg" "$sample_index" > "$temp_input"; then
-                print_warning "No sample input found in examples; falling back to interactive stdin"
-                rm -f "$temp_input"
+                print_warning "No sample input found in examples; falling back to samples/ or stdin"
+                rm -f "$temp_input" 2>/dev/null || true
                 temp_input=""
             fi
-            trap "rm -f $output_file $temp_input" RETURN
+
+            if [ -z "$temp_input" ] && [ -d "$PWD/samples" ]; then
+                local sample_in="$PWD/samples/${sample_index}.in"
+                local sample_out="$PWD/samples/${sample_index}.out"
+                if [ -f "$sample_in" ]; then
+                    temp_input=$(mktemp) || error_exit "Failed to create temp input file" "$EXIT_IO"
+                    cat "$sample_in" > "$temp_input"
+                    if [ -f "$sample_out" ]; then
+                        expected_output=$(cat "$sample_out")
+                        is_problem_file=true
+                    fi
+                fi
+            fi
+
+            if [ -n "$temp_input" ]; then
+                add_cleanup "$temp_input"
+            else
+                print_warning "No sample input found; falling back to interactive stdin"
+            fi
         else
             # Input is a string (possibly with escaped newlines)
             print_info "Running with inline input"
@@ -521,9 +634,9 @@ cmd_run() {
             input_data=$(printf "%b" "$input_arg") || true
 
             # Create temp input file
-            temp_input=$(mktemp) || error_exit "Failed to create temp input file" 1
+            temp_input=$(mktemp) || error_exit "Failed to create temp input file" "$EXIT_IO"
             printf '%s' "$input_data" > "$temp_input"
-            trap "rm -f $output_file $temp_input" RETURN
+            add_cleanup "$temp_input"
         fi
     else
         print_info "Running with stdin (pipe input or interactive)"
@@ -544,6 +657,7 @@ cmd_run() {
     if [ -n "$temp_input" ]; then
         actual_output=$(safe_execute "$output_file" "$temp_input") || return 1
         printf '%s' "$actual_output"
+        compare_enabled=true
     else
         safe_execute "$output_file" || return 1
     fi
@@ -551,7 +665,7 @@ cmd_run() {
     printf -- '\n---\n'
 
     # Display expected output if available
-    if [ "$is_problem_file" = true ]; then
+    if [ "$is_problem_file" = true ] && [ "$compare_enabled" = true ]; then
         if [ -n "$expected_output" ]; then
             local normalized_actual
             local normalized_expected
@@ -574,6 +688,8 @@ cmd_run() {
         else
             print_warning "No sample output detected; skipping compare"
         fi
+    elif [ "$is_problem_file" = true ] && [ "$compare_enabled" = false ]; then
+        print_warning "Expected output available but input was interactive; skipping compare"
     fi
 
     print_success "Execution complete"
@@ -589,13 +705,13 @@ cmd_test() {
         print_info "Using fallback: testing template.cpp"
 
         if [ ! -f "$SRC_DIR/template.cpp" ]; then
-            error_exit "Template file not found" 2
+            error_exit "Template file not found" "$EXIT_IO"
         fi
 
         # Basic test
         local output_file
-        output_file=$(mktemp) || error_exit "Failed to create temp file" 1
-        trap "rm -f $output_file" RETURN
+        output_file=$(mktemp) || error_exit "Failed to create temp file" "$EXIT_IO"
+        add_cleanup "$output_file"
 
         if safe_compile "$output_file" "$SRC_DIR/template.cpp"; then
             print_success "Template compiles successfully"
@@ -614,7 +730,7 @@ cmd_update() {
 
     # Verify we're in a git repository
     if [ ! -d "$REPO_ROOT/.git" ]; then
-        error_exit "Not a git repository: $REPO_ROOT" 2
+        error_exit "Not a git repository: $REPO_ROOT" "$EXIT_UPDATE"
     fi
 
     # Save current directory
@@ -626,6 +742,9 @@ cmd_update() {
     # Check for uncommitted changes
     if ! git diff-index --quiet HEAD -- 2>/dev/null; then
         print_warning "You have uncommitted changes in the repository"
+        if [ "${CF_NONINTERACTIVE:-0}" -eq 1 ] || ! is_tty; then
+            error_exit "Update aborted in non-interactive mode due to uncommitted changes" "$EXIT_UPDATE"
+        fi
         printf '%s' "Continue with update? (y/N): "
         read -r response
         if [[ ! "$response" =~ ^[Yy]$ ]]; then
@@ -635,15 +754,31 @@ cmd_update() {
         fi
     fi
 
+    # Determine upstream
+    local current_branch
+    local upstream
+    local remote
+    local remote_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+    if [ -z "$upstream" ] && [ -n "$current_branch" ]; then
+        upstream="origin/$current_branch"
+    fi
+    if [ -z "$upstream" ]; then
+        error_exit "Unable to determine upstream branch" "$EXIT_UPDATE"
+    fi
+    remote="${upstream%%/*}"
+    remote_branch="${upstream#*/}"
+
     # Fetch and pull latest changes
-    print_info "Fetching latest changes from remote..."
-    if ! git fetch origin 2>&1; then
-        error_exit "Failed to fetch from remote repository" 1
+    print_info "Fetching latest changes from $remote..."
+    if ! git fetch "$remote" 2>&1; then
+        error_exit "Failed to fetch from remote repository" "$EXIT_UPDATE"
     fi
 
-    print_info "Pulling latest changes..."
-    if ! git pull origin main 2>&1; then
-        error_exit "Failed to pull latest changes" 1
+    print_info "Pulling latest changes from $remote/$remote_branch..."
+    if ! git pull "$remote" "$remote_branch" 2>&1; then
+        error_exit "Failed to pull latest changes" "$EXIT_UPDATE"
     fi
 
     print_success "Repository updated successfully"
@@ -676,7 +811,7 @@ cf - Codeforces CLI Tool
 
 USAGE:
   cf <command> [args]
-  cf [input] [--sample N]
+    cf [input] [--sample N] [--input FILE] [--stdin]
 
 COMMANDS:
   template <name>    Create new problem template
@@ -689,6 +824,8 @@ EXAMPLES:
   cf problem.txt              Run solution with input from file
   cf problem.txt 2            Run sample #2 from problem.txt
   cf --sample 2               Run sample #2 from problem.txt (auto)
+    cf --input input.txt         Run with explicit input file
+    cf --stdin                   Force interactive stdin
   cf "5\n1 2 3 4 5"           Run solution with inline input
   cf test                     Run test suite
 
@@ -699,12 +836,18 @@ FEATURES:
     - Timeout protection (5s) prevents infinite loops
     - Validates input and handles errors gracefully
     - Compares output with expected results
+    - Build caching for faster repeated runs
     - Cross-platform (Linux/macOS/WSL)
     - Production-grade reliability
 
 ENVIRONMENT:
   CF_REPO_ROOT     Override repository root directory
   CF_VERBOSE       Set to 1 for debug output
+    CF_CXXFLAGS      Override compiler flags
+    CF_TIMEOUT       Override execution timeout (seconds)
+    CF_BUILD_CACHE_DIR  Override build cache location
+    CF_FORCE_REBUILD Force rebuild (set to 1)
+    CF_NONINTERACTIVE   Disable prompts (set to 1)
 
 NEXT STEPS:
   1. Create a template: cf template 1000A
@@ -712,7 +855,7 @@ NEXT STEPS:
   3. Run with test input: cf problem.txt
   4. Submit to Codeforces
 
-For more information, visit: https://github.com/yourusername/cf
+For more information, visit: https://github.com/mbn-code/cf
 
 EOF
 }

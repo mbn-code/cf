@@ -96,14 +96,23 @@ vim solution.cpp
 # With input file
 cf problem.txt
 
+# Run sample #2 from problem.txt
+cf --sample 2
+
 # With inline input
 cf "5\n1 2 3 4 5"
+
+# Force interactive stdin
+cf --stdin
 
 # Interactive (pipe input)
 cf
 
 # Run with custom input file
 cf custom_input.txt
+
+# Use an explicit input flag
+cf --input input.txt
 ```
 
 ### Run Test Suite
@@ -196,6 +205,19 @@ The system automatically kills programs exceeding 5 seconds. Optimize for:
 - Algorithms: Use O(n log n) instead of O(n²)
 - I/O: Enable fast I/O (see step 3)
 - Memory: Pre-allocate vectors instead of using push_back in loops
+
+## Configuration
+
+You can override defaults via environment variables or a `.cfconfig` file at the repo root.
+
+```bash
+# Examples
+export CF_CXXFLAGS="-std=c++23 -O2 -Wall -Wextra -Wshadow"
+export CF_TIMEOUT=8
+export CF_BUILD_CACHE_DIR="$HOME/.cache/cf"
+export CF_FORCE_REBUILD=1
+export CF_NONINTERACTIVE=1
+```
 
 ### 6. Validate Output Format
 
