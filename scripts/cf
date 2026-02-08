@@ -681,14 +681,16 @@ cmd_run() {
     print_info "Your Output:"
     printf -- '---\n'
 
-
-    local actual_output=""
+    local tmp_actual_output=""
     if [ -n "$temp_input" ]; then
         tmp_actual_output=$(mktemp)
         safe_execute --output="$tmp_actual_output" "$output_file" "$temp_input" || return 1
-        actual_output=$(cat "$tmp_actual_output")
-        rm -f "$tmp_actual_output"
-        printf '%s' "$actual_output"
+        # Stream output directly to stdout, not through variable
+        cat "$tmp_actual_output"
+        # Check for null bytes in output
+        if grep -qa $'\0' "$tmp_actual_output" 2>/dev/null; then
+            print_warning "Output contains null bytes - they will be stripped for comparison"
+        fi
         compare_enabled=true
     else
         safe_execute "$output_file" || return 1
@@ -699,22 +701,30 @@ cmd_run() {
     # Display expected output if available
     if [ "$is_problem_file" = true ] && [ "$compare_enabled" = true ]; then
         if [ -n "$expected_output" ]; then
-            local normalized_actual
-            local normalized_expected
-            normalized_actual=$(normalize_output "$actual_output")
-            normalized_expected=$(normalize_output "$expected_output")
-
             printf '\n'
             print_info "Expected Output:"
             printf -- '---\n'
-            printf '%s' "$normalized_expected"
+            printf '%s' "$expected_output"
             printf -- '\n---\n'
 
-            # Compare outputs (simple comparison)
-            if [ "$normalized_actual" = "$normalized_expected" ]; then
+            # Create temporary file for normalization to avoid shell variable limitations with null bytes
+            local tmp_normalized_actual
+            local tmp_normalized_expected
+            tmp_normalized_actual=$(mktemp)
+            tmp_normalized_expected=$(mktemp)
+            add_cleanup "$tmp_normalized_actual"
+            add_cleanup "$tmp_normalized_expected"
+
+            # Normalize outputs from files
+            normalize_output "$(cat "$tmp_actual_output")" > "$tmp_normalized_actual"
+            normalize_output "$expected_output" > "$tmp_normalized_expected"
+
+            # Compare normalized outputs from files
+            if cmp -s "$tmp_normalized_actual" "$tmp_normalized_expected"; then
                 print_success "Output matches expected."
             else
                 print_warning "Output does not match expected."
+                rm -f "$tmp_actual_output" 2>/dev/null || true
                 return 1
             fi
         else
@@ -723,6 +733,9 @@ cmd_run() {
     elif [ "$is_problem_file" = true ] && [ "$compare_enabled" = false ]; then
         print_warning "Expected output available but input was interactive; skipping compare"
     fi
+
+    # Cleanup
+    rm -f "$tmp_actual_output" 2>/dev/null || true
 
     print_success "Execution complete"
 }
