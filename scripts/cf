@@ -162,6 +162,9 @@ dir_exists() {
     [ -d "$1" ]
 }
 
+# Global flag to track if timeout warning has been shown
+TIMEOUT_WARNING_SHOWN=0
+
 # Check for timeout command availability
 check_timeout_cmd() {
     if command -v timeout &> /dev/null; then
@@ -171,9 +174,12 @@ check_timeout_cmd() {
         TIMEOUT_CMD="gtimeout"
         return 0
     else
-        print_warning "timeout command not found; execution timeout protection disabled"
-        if command -v brew &> /dev/null; then
-            print_info "Install on macOS: brew install coreutils"
+        if [ "$TIMEOUT_WARNING_SHOWN" -eq 0 ]; then
+            print_warning "timeout command not found; execution timeout protection disabled"
+            if command -v brew &> /dev/null; then
+                print_info "Install on macOS: brew install coreutils"
+            fi
+            TIMEOUT_WARNING_SHOWN=1
         fi
         return 1
     fi
@@ -215,15 +221,29 @@ compute_sources_hash() {
 
 # Safe execution with timeout
 safe_execute() {
+
+    local output_file=""
+    if [[ "$1" == --output=* ]]; then
+        output_file="${1#--output=}"
+        shift
+    fi
     local binary="$1"
     local input_file="${2:-}"
     local timeout_sec="${EXEC_TIMEOUT}"
 
     if check_timeout_cmd; then
-        if [ -n "$input_file" ] && [ -f "$input_file" ]; then
-            "$TIMEOUT_CMD" "$timeout_sec" "$binary" < "$input_file" 2>&1
+        if [ -n "$output_file" ]; then
+            if [ -n "$input_file" ] && [ -f "$input_file" ]; then
+                "$TIMEOUT_CMD" "$timeout_sec" "$binary" < "$input_file" > "$output_file" 2>&1
+            else
+                "$TIMEOUT_CMD" "$timeout_sec" "$binary" > "$output_file" 2>&1
+            fi
         else
-            "$TIMEOUT_CMD" "$timeout_sec" "$binary" 2>&1
+            if [ -n "$input_file" ] && [ -f "$input_file" ]; then
+                "$TIMEOUT_CMD" "$timeout_sec" "$binary" < "$input_file" 2>&1
+            else
+                "$TIMEOUT_CMD" "$timeout_sec" "$binary" 2>&1
+            fi
         fi
         local exit_code=$?
         if [ $exit_code -eq 124 ]; then
@@ -234,10 +254,18 @@ safe_execute() {
             return 1
         fi
     else
-        if [ -n "$input_file" ] && [ -f "$input_file" ]; then
-            "$binary" < "$input_file" 2>&1
+        if [ -n "$output_file" ]; then
+            if [ -n "$input_file" ] && [ -f "$input_file" ]; then
+                "$binary" < "$input_file" > "$output_file" 2>&1
+            else
+                "$binary" > "$output_file" 2>&1
+            fi
         else
-            "$binary" 2>&1
+            if [ -n "$input_file" ] && [ -f "$input_file" ]; then
+                "$binary" < "$input_file" 2>&1
+            else
+                "$binary" 2>&1
+            fi
         fi
     fi
     return 0
@@ -653,9 +681,13 @@ cmd_run() {
     print_info "Your Output:"
     printf -- '---\n'
 
+
     local actual_output=""
     if [ -n "$temp_input" ]; then
-        actual_output=$(safe_execute "$output_file" "$temp_input") || return 1
+        tmp_actual_output=$(mktemp)
+        safe_execute --output="$tmp_actual_output" "$output_file" "$temp_input" || return 1
+        actual_output=$(cat "$tmp_actual_output")
+        rm -f "$tmp_actual_output"
         printf '%s' "$actual_output"
         compare_enabled=true
     else
