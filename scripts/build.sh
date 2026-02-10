@@ -104,13 +104,15 @@ build_all() {
 
         local filename=$(basename "$file" .cpp)
         local output="$BUILD_DIR/$filename"
+        local compiler_output
 
         print_info "Compiling: $filename"
-        if $COMPILER $CXXFLAGS $INCLUDE_FLAGS "$file" -o "$output"; then
+        if ! compiler_output=$($COMPILER $CXXFLAGS $INCLUDE_FLAGS "$file" -o "$output" 2>&1); then
+            print_error "Failed to compile: $filename"
+            echo "$compiler_output" >&2
+        else
             print_success "Compiled: $filename"
             ((count++))
-        else
-            print_error "Failed to compile: $filename"
         fi
     done
 
@@ -127,14 +129,19 @@ build_and_run() {
 
     # Find the .cpp file
     local cpp_file=""
+    local project_root
+    project_root="$(dirname "$SCRIPT_DIR")"
 
-    if [ -f "$SRC_DIR/$problem_name.cpp" ]; then
+    if [ -f "$project_root/problems/${problem_name}.c++" ]; then
+        cpp_file="$project_root/problems/${problem_name}.c++"
+    elif [ -f "$SRC_DIR/$problem_name.cpp" ]; then
         cpp_file="$SRC_DIR/$problem_name.cpp"
     elif [ -f "$SRC_DIR/$problem_name/solution.cpp" ]; then
         cpp_file="$SRC_DIR/$problem_name/solution.cpp"
     else
         print_error "Could not find source file for: $problem_name"
         echo "Searched in:"
+        echo "  - $project_root/problems/${problem_name}.c++"
         echo "  - $SRC_DIR/$problem_name.cpp"
         echo "  - $SRC_DIR/$problem_name/solution.cpp"
         exit 1
@@ -142,10 +149,12 @@ build_and_run() {
 
     mkdir -p "$BUILD_DIR"
     local output="$BUILD_DIR/$problem_name"
+    local compiler_output
 
     print_info "Compiling with $COMPILER..."
-    if ! $COMPILER $CXXFLAGS $INCLUDE_FLAGS "$cpp_file" -o "$output"; then
+    if ! compiler_output=$($COMPILER $CXXFLAGS $INCLUDE_FLAGS "$cpp_file" -o "$output" 2>&1); then
         print_error "Compilation failed"
+        echo "$compiler_output" >&2
         exit 1
     fi
     print_success "Compiled successfully"
@@ -171,8 +180,12 @@ build_debug() {
 
     # Find the .cpp file
     local cpp_file=""
+    local project_root
+    project_root="$(dirname "$SCRIPT_DIR")"
 
-    if [ -f "$SRC_DIR/$problem_name.cpp" ]; then
+    if [ -f "$project_root/problems/${problem_name}.c++" ]; then
+        cpp_file="$project_root/problems/${problem_name}.c++"
+    elif [ -f "$SRC_DIR/$problem_name.cpp" ]; then
         cpp_file="$SRC_DIR/$problem_name.cpp"
     elif [ -f "$SRC_DIR/$problem_name/solution.cpp" ]; then
         cpp_file="$SRC_DIR/$problem_name/solution.cpp"
@@ -183,10 +196,12 @@ build_debug() {
 
     mkdir -p "$BUILD_DIR"
     local output="$BUILD_DIR/${problem_name}_debug"
+    local compiler_output
 
     print_info "Compiling with debug symbols..."
-    if ! $COMPILER $CXXFLAGS -g $INCLUDE_FLAGS "$cpp_file" -o "$output"; then
+    if ! compiler_output=$($COMPILER $CXXFLAGS -g $INCLUDE_FLAGS "$cpp_file" -o "$output" 2>&1); then
         print_error "Debug compilation failed"
+        echo "$compiler_output" >&2
         exit 1
     fi
 

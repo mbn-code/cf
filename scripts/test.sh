@@ -129,12 +129,14 @@ validate_input_output() {
 compile_solution() {
     local source_file="$1"
     local binary_name="$2"
+    local compiler_output
 
     print_info "Compiling: $(basename "$source_file")"
 
-    if ! $COMPILER $CXXFLAGS $INCLUDE_FLAGS "$source_file" -o "$binary_name" 2>&1; then
+    if ! compiler_output=$($COMPILER $CXXFLAGS $INCLUDE_FLAGS "$source_file" -o "$binary_name" 2>&1); then
         print_failure "Compilation failed for $source_file"
-        COMPILATION_ERRORS=$((COMPILATION_ERRORS+1))
+        echo -e "${RED}${compiler_output}${NC}"
+        COMPILATION_ERRORS=$((COMPILATION_ERRORS + 1))
         return 1
     fi
 
@@ -402,9 +404,13 @@ main() {
 
     # Test specific problem or all
     if [[ -n "$problem_name" ]]; then
-        local source_file="$SRC_DIR/${problem_name}.cpp"
-        if [[ ! -f "$source_file" ]]; then
-            print_failure "Solution not found: $source_file"
+        local source_file=""
+        if [ -f "$PROJECT_ROOT/problems/${problem_name}.c++" ]; then
+            source_file="$PROJECT_ROOT/problems/${problem_name}.c++"
+        elif [ -f "$SRC_DIR/${problem_name}.cpp" ]; then
+            source_file="$SRC_DIR/${problem_name}.cpp"
+        else
+            print_failure "Solution not found for: $problem_name"
             exit 2
         fi
         test_solution "$source_file" "$input_file" "$output_file" "$timeout_sec"

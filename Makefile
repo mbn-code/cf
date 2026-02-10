@@ -53,64 +53,57 @@ compile: create_build_dir
 	@echo "Compiling with $(CXX)..."
 	@find $(SRC_DIR) -name "*.cpp" -type f | while read file; do \
 		filename=$$(basename "$$file" .cpp); \
-		if $(CXX) $(CXXFLAGS) $(INCLUDE) "$$file" -o $(BUILD_DIR)/$$filename 2>&1; then \
-			echo "  PASS: $$filename"; \
-		else \
+		compiler_output=$$($(CXX) $(CXXFLAGS) $(INCLUDE) "$$file" -o $(BUILD_DIR)/$$filename 2>&1); \
+		if [ $$? -ne 0 ]; then \
 			echo "  FAIL: Compilation failed for $$filename"; \
+			echo "$$compiler_output"; \
 			exit 1; \
+		else \
+			echo "  PASS: $$filename"; \
 		fi; \
 	done
 
 run: create_build_dir
 	@echo "Compiling $(FILE) with $(CXX)..."
-	@if [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then \
-		if $(CXX) $(CXXFLAGS) $(INCLUDE) $(SRC_DIR)/$(FILE).cpp -o $(OUTPUT_DIR)/$(FILE) 2>&1; then \
-			echo "Compiled: $(FILE)"; \
-			echo "Running with 5s timeout..."; \
-			echo "---"; \
-			timeout 5 $(OUTPUT_DIR)/$(FILE) 2>&1 || true; \
-			echo "---"; \
-			rm -f $(OUTPUT_DIR)/$(FILE); \
-		else \
-			echo "FAIL: Compilation failed"; \
-			exit 1; \
-		fi; \
-	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then \
-		if $(CXX) $(CXXFLAGS) $(INCLUDE) $(SRC_DIR)/$(FILE)/solution.cpp -o $(OUTPUT_DIR)/$(FILE) 2>&1; then \
-			echo "Compiled: $(FILE)"; \
-			echo "Running with 5s timeout..."; \
-			echo "---"; \
-			timeout 5 $(OUTPUT_DIR)/$(FILE) 2>&1 || true; \
-			echo "---"; \
-			rm -f $(OUTPUT_DIR)/$(FILE); \
-		else \
-			echo "FAIL: Compilation failed"; \
-			exit 1; \
-		fi; \
-	else \
-		echo "FAIL: Error: Could not find $(FILE).cpp or $(FILE)/solution.cpp"; \
+	@source_file=""; \
+	if [ -f "problems/$(FILE).c++" ]; then source_file="problems/$(FILE).c++"; \
+	elif [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then source_file="$(SRC_DIR)/$(FILE).cpp"; \
+	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then source_file="$(SRC_DIR)/$(FILE)/solution.cpp"; fi; \
+	if [ -z "$$source_file" ]; then \
+		echo "FAIL: Error: Could not find $(FILE).c++ or $(FILE)/solution.cpp"; \
 		exit 1; \
+	fi; \
+	compiler_output=$$($(CXX) $(CXXFLAGS) $(INCLUDE) $$source_file -o $(OUTPUT_DIR)/$(FILE) 2>&1); \
+	if [ $$? -ne 0 ]; then \
+		echo "FAIL: Compilation failed"; \
+		echo "$$compiler_output"; \
+		exit 1; \
+	else \
+		echo "Compiled: $(FILE)"; \
+		echo "Running with 5s timeout..."; \
+		echo "---"; \
+		timeout 5 $(OUTPUT_DIR)/$(FILE) 2>&1 || true; \
+		echo "---"; \
+		rm -f $(OUTPUT_DIR)/$(FILE); \
 	fi
 
 debug: create_build_dir
 	@echo "Compiling $(FILE) with debug symbols..."
-	@if [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then \
-		if $(CXX) $(CXXFLAGS) -g $(INCLUDE) $(SRC_DIR)/$(FILE).cpp -o $(BUILD_DIR)/$(FILE)_debug 2>&1; then \
-			echo "Debug binary: $(BUILD_DIR)/$(FILE)_debug"; \
-		else \
-			echo "FAIL: Compilation failed"; \
-			exit 1; \
-		fi; \
-	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then \
-		if $(CXX) $(CXXFLAGS) -g $(INCLUDE) $(SRC_DIR)/$(FILE)/solution.cpp -o $(BUILD_DIR)/$(FILE)_debug 2>&1; then \
-			echo "Debug binary: $(BUILD_DIR)/$(FILE)_debug"; \
-		else \
-			echo "FAIL: Compilation failed"; \
-			exit 1; \
-		fi; \
-	else \
-		echo "FAIL: Error: Could not find $(FILE).cpp or $(FILE)/solution.cpp"; \
+	@source_file=""; \
+	if [ -f "problems/$(FILE).c++" ]; then source_file="problems/$(FILE).c++"; \
+	elif [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then source_file="$(SRC_DIR)/$(FILE).cpp"; \
+	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then source_file="$(SRC_DIR)/$(FILE)/solution.cpp"; fi; \
+	if [ -z "$$source_file" ]; then \
+		echo "FAIL: Error: Could not find $(FILE).c++ or $(FILE)/solution.cpp"; \
 		exit 1; \
+	fi; \
+	compiler_output=$$($(CXX) $(CXXFLAGS) -g $(INCLUDE) $$source_file -o $(BUILD_DIR)/$(FILE)_debug 2>&1); \
+	if [ $$? -ne 0 ]; then \
+		echo "FAIL: Compilation failed"; \
+		echo "$$compiler_output"; \
+		exit 1; \
+	else \
+		echo "Debug binary: $(BUILD_DIR)/$(FILE)_debug"; \
 	fi
 
 clean:
