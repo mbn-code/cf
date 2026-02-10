@@ -35,7 +35,8 @@ set -euo pipefail
 # Determine repository root (handle symlinks)
 if [ -f "${BASH_SOURCE[0]}" ]; then
     SCRIPT_PATH="${BASH_SOURCE[0]}"
-    if command -v readlink &> /dev/null; then
+    if command -v readlink &> /dev/null;
+        then
         SCRIPT_PATH="$(readlink -f "$SCRIPT_PATH" 2>/dev/null || printf '%s' "$SCRIPT_PATH")"
     fi
     SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
@@ -57,9 +58,11 @@ BUILD_DIR="$REPO_ROOT/build"
 TESTS_DIR="$REPO_ROOT/tests"
 
 # Compiler selection: prefer g++, fall back to clang++
-if command -v g++ &> /dev/null; then
+if command -v g++ &> /dev/null;
+    then
     COMPILER="g++"
-elif command -v clang++ &> /dev/null; then
+elif command -v clang++ &> /dev/null;
+    then
     COMPILER="clang++"
 else
     printf '%s\n' "Error: No C++ compiler found. Install g++ or clang++." >&2
@@ -167,16 +170,19 @@ TIMEOUT_WARNING_SHOWN=0
 
 # Check for timeout command availability
 check_timeout_cmd() {
-    if command -v timeout &> /dev/null; then
+    if command -v timeout &> /dev/null;
+        then
         TIMEOUT_CMD="timeout"
         return 0
-    elif command -v gtimeout &> /dev/null; then
+    elif command -v gtimeout &> /dev/null;
+        then
         TIMEOUT_CMD="gtimeout"
         return 0
     else
         if [ "$TIMEOUT_WARNING_SHOWN" -eq 0 ]; then
             print_warning "timeout command not found; execution timeout protection disabled"
-            if command -v brew &> /dev/null; then
+            if command -v brew &> /dev/null;
+                then
                 print_info "Install on macOS: brew install coreutils"
             fi
             TIMEOUT_WARNING_SHOWN=1
@@ -202,9 +208,11 @@ trap 'run_cleanup' RETURN
 compute_sources_hash() {
     local sources=("$@")
     local hash_cmd=""
-    if command -v sha256sum &> /dev/null; then
+    if command -v sha256sum &> /dev/null;
+        then
         hash_cmd="sha256sum"
-    elif command -v shasum &> /dev/null; then
+    elif command -v shasum &> /dev/null;
+        then
         hash_cmd="shasum -a 256"
     else
         return 1
@@ -231,7 +239,8 @@ safe_execute() {
     local input_file="${2:-}"
     local timeout_sec="${EXEC_TIMEOUT}"
 
-    if check_timeout_cmd; then
+    if check_timeout_cmd;
+        then
         if [ -n "$output_file" ]; then
             if [ -n "$input_file" ] && [ -f "$input_file" ]; then
                 "$TIMEOUT_CMD" "$timeout_sec" "$binary" < "$input_file" > "$output_file" 2>&1
@@ -279,7 +288,8 @@ safe_compile() {
 
     print_debug "Compiling: ${sources[*]} -> $output"
 
-    if ! $COMPILER $CXXFLAGS -I "$INCLUDE_DIR" "${sources[@]}" -o "$output" 2>&1; then
+    if ! $COMPILER $CXXFLAGS -I "$INCLUDE_DIR" "${sources[@]}" -o "$output" 2>&1;
+        then
         print_error "Compilation failed"
         return 1
     fi
@@ -298,7 +308,8 @@ extract_example_block() {
     fi
 
     # Check if this looks like a problem description with Examples section
-    if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
+    if grep -qi "Examples\|Example" "$file" 2>/dev/null;
+        then
         awk -v idx="$sample_index" -v target="$target" '
             function norm(s){ gsub(/\r/, "", s); return s }
             function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
@@ -358,7 +369,8 @@ extract_test_input() {
         return 1
     fi
 
-    if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
+    if grep -qi "Examples\|Example" "$file" 2>/dev/null;
+        then
         extract_example_block "$file" "$sample_index" "input"
     else
         # Regular input file, return as-is
@@ -375,7 +387,8 @@ extract_expected_output() {
         return 1
     fi
 
-    if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
+    if grep -qi "Examples\|Example" "$file" 2>/dev/null;
+        then
         extract_example_block "$file" "$sample_index" "output"
     else
         return 1
@@ -390,7 +403,8 @@ count_samples() {
         return 0
     fi
 
-    if ! grep -qi "Examples\|Example" "$file" 2>/dev/null; then
+    if ! grep -qi "Examples\|Example" "$file" 2>/dev/null;
+        then
         printf '0'
         return 0
     fi
@@ -504,7 +518,8 @@ EOF
     fi
 
     # Open files in VS Code if available
-    if command -v code &> /dev/null; then
+    if command -v code &> /dev/null;
+        then
         print_info "Opening files in VS Code..."
         code "$problem_file" "$solution_file" 2>/dev/null || true
         print_success "Opened in VS Code"
@@ -534,21 +549,21 @@ cmd_run() {
                 fi
                 sample_index="$1"
                 sample_set=1
-                ;;
+                ;; 
             --input|--file|-i)
                 shift || true
                 if [ -z "${1:-}" ]; then
                     error_exit "Missing value for --input" "$EXIT_USAGE"
                 fi
                 input_arg="$1"
-                ;;
+                ;; 
             --stdin)
                 use_stdin=1
-                ;;
+                ;; 
             --help|-h)
                 cmd_help
                 return 0
-                ;;
+                ;; 
             *)
                 if [ -z "$input_arg" ]; then
                     input_arg="$1"
@@ -557,7 +572,7 @@ cmd_run() {
                 else
                     print_warning "Ignoring extra argument: $1"
                 fi
-                ;;
+                ;; 
         esac
         shift || true
     done
@@ -618,7 +633,8 @@ cmd_run() {
             print_info "Running with input from: $input_arg"
 
             # Check if this is a problem file and extract expected output
-            if grep -qi "Examples\|Example" "$input_arg" 2>/dev/null; then
+            if grep -qi "Examples\|Example" "$input_arg" 2>/dev/null;
+                then
                 is_problem_file=true
                 local sample_count
                 sample_count=$(count_samples "$input_arg")
@@ -687,10 +703,6 @@ cmd_run() {
         safe_execute --output="$tmp_actual_output" "$output_file" "$temp_input" || return 1
         # Stream output directly to stdout, not through variable
         cat "$tmp_actual_output"
-        # Check for null bytes in output
-        if grep -qa $'\0' "$tmp_actual_output" 2>/dev/null; then
-            print_warning "Output contains null bytes - they will be stripped for comparison"
-        fi
         compare_enabled=true
     else
         safe_execute "$output_file" || return 1
@@ -785,9 +797,11 @@ cmd_update() {
     cd "$REPO_ROOT" || error_exit "Failed to change to repository directory" 1
 
     # Check for uncommitted changes
-    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+    if ! git diff-index --quiet HEAD -- 2>/dev/null;
+        then
         print_warning "You have uncommitted changes in the repository"
-        if [ "${CF_NONINTERACTIVE:-0}" -eq 1 ] || ! is_tty; then
+        if [ "${CF_NONINTERACTIVE:-0}" -eq 1 ] || ! is_tty;
+            then
             error_exit "Update aborted in non-interactive mode due to uncommitted changes" "$EXIT_UPDATE"
         fi
         printf '%s' "Continue with update? (y/N): "
@@ -817,12 +831,14 @@ cmd_update() {
 
     # Fetch and pull latest changes
     print_info "Fetching latest changes from $remote..."
-    if ! git fetch "$remote" 2>&1; then
+    if ! git fetch "$remote" 2>&1;
+        then
         error_exit "Failed to fetch from remote repository" "$EXIT_UPDATE"
     fi
 
     print_info "Pulling latest changes from $remote/$remote_branch..."
-    if ! git pull "$remote" "$remote_branch" 2>&1; then
+    if ! git pull "$remote" "$remote_branch" 2>&1;
+        then
         error_exit "Failed to pull latest changes" "$EXIT_UPDATE"
     fi
 
@@ -919,20 +935,20 @@ main() {
                 error_exit "Repository structure not found. Expected $SRC_DIR" 2
             fi
             cmd_template "$@"
-            ;;
+            ;; 
         test)
             # Validate repo structure for test command
             if [ ! -d "$SRC_DIR" ]; then
                 error_exit "Repository structure not found. Expected $SRC_DIR" 2
             fi
             cmd_test "$@"
-            ;;
+            ;; 
         update)
             cmd_update "$@"
-            ;;
+            ;; 
         help|--help|-h)
             cmd_help
-            ;;
+            ;; 
         "")
             # Auto-detect problem.txt if no args given
             if [ -f "$PWD/problem.txt" ]; then
@@ -950,10 +966,10 @@ main() {
                 printf '%s\n' "For more information: cf help"
                 return 1
             fi
-            ;;
+            ;; 
         *)
             cmd_run "$command" "$@"
-            ;;
+            ;; 
     esac
 }
 

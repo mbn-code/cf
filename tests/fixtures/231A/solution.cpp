@@ -13,6 +13,6 @@ int main() {
         cin >> a >> b >> c;
         if (a + b + c >= 2) count++;
     }
-    cout << count;
+    cout << count << "\n";
     return 0;
 }
