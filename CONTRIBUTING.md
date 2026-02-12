@@ -1,268 +1,87 @@
-# Contributing Guidelines
+# Contributing to cf Toolkit
+
+First off, thanks for taking the time to contribute! Contributions are what make the open-source community such an amazing place to learn, inspire, and create.
+
+## How Can I Contribute?
+
+### Reporting Bugs
+- Use the [Bug Report Template](.github/ISSUE_TEMPLATE/bug_report.yml).
+- Provide a clear and concise description of the bug.
+- Include reproduction steps and your environment details.
+
+### Suggesting Enhancements
+- Use the [Feature Request Template](.github/ISSUE_TEMPLATE/feature_request.yml).
+- Explain why the feature would be useful.
+
+### Pull Requests
+1. Fork the repo and create your branch from `main`.
+2. If you've added code that should be tested, add tests.
+3. Ensure the test suite passes.
+4. Make sure your code follows the existing style.
+5. Write a clear title and description for your pull request.
+
+> [!IMPORTANT]
+> Always run `npm run lint` and `npm run build` in the `web` directory before submitting a PR to catch any TypeScript or styling errors.
+
+## Development Setup
+
+### CLI Development
+The core logic resides in `scripts/`. If you modify `cf`, `test.sh`, or `build.sh`, make sure to test them across different problem structures.
+
+> [!WARNING]
+> Be careful when modifying the `cf` script's path resolution logic, as it needs to work for both local clones and global installations.
+
+```bash
+# Test the CLI locally
+./scripts/cf --version
+```
+
+### Web Interface Development
+The web interface is built with **Next.js 15**, **Tailwind CSS 4**, and **Shadcn UI**.
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+The web interface communicates with the local filesystem via API routes in `web/app/api/`.
 
 ## Project Structure
 
-This repository is designed for competitive programming on Codeforces and similar platforms. Here's the standard workflow:
-
-### Creating New Solutions
-
-1. **Generate a template:**
-
-   ```bash
-   cf template problem_1000A
-   ```
-
-2. **Edit your solution:**
-
-   ```bash
-   vim src/problem_1000A/solution.cpp
-   ```
-
-3. **Test locally:**
-   ```bash
-   cf problem_1000A input.txt
-   ```
-
-## Best Practices
-
-### Code Style
-
-- Use meaningful variable names
-- Comment complex logic
-- Keep functions concise and reusable
-- Place helper functions at the top
-
-### Performance
-
-- Always enable fast I/O:
-
-  ```cpp
-  ios::sync_with_stdio(false);
-  cin.tie(nullptr);
-  ```
-
-- Use appropriate data types (`int` vs `long long`)
-- Avoid unnecessary memory allocations in loops
-- Test with edge cases (empty input, max values, etc.)
-
-### Template Reuse
-
-- Save common algorithms in `templates/`
-- Create headers in `include/` for shared code
-- Document your algorithms with comments
-
-## Adding Custom Templates
-
-1. Create a new file in `templates/`:
-
-   ```bash
-   touch templates/string_algorithms.cpp
-   ```
-
-2. Add well-commented algorithm implementations
-
-3. Test it compiles:
-   ```bash
-   g++ -std=c++23 templates/string_algorithms.cpp
-   ```
-
-## Testing
-
-### With Test Files
-
-```bash
-# Create test input
-echo "5
-1 2 3 4 5" > tests/my_test.txt
-
-# Run
-cf problem_name tests/my_test.txt
-```
-
-### With Inline Input
-
-```bash
-cf problem_name "5
-1 2 3 4 5"
-```
-
-### With Pipe
-
-```bash
-echo "5
-1 2 3 4 5" | cf problem_name
-```
-
-## Debugging
-
-### GDB (Linux)
-
-```bash
-make debug FILE=problem_name
-gdb ./build/problem_name_debug
-(gdb) run < tests/input.txt
-(gdb) break solution.cpp:42
-(gdb) continue
-(gdb) print variable_name
-```
-
-### LLDB (macOS)
-
-```bash
-make debug FILE=problem_name
-lldb ./build/problem_name_debug
-(lldb) run < tests/input.txt
-(lldb) b solution.cpp:42
-(lldb) c
-(lldb) p variable_name
-```
-
-## Version Control
-
-Each problem solution goes into `src/problem_name/`:
-
-```
-src/
-├── template.cpp          # Master template
-├── 1000A/
-│   ├── solution.cpp      # Your solution
-│   ├── input1.txt        # Test case 1
-│   └── input2.txt        # Test case 2
-├── 1000B/
-│   └── solution.cpp
-└── ...
-```
-
-### Commit Message Format
-
-```
-[Problem ID] Brief description
-
-Longer explanation if needed.
-
-Files: src/1000A/solution.cpp
-Time Complexity: O(n log n)
-Space Complexity: O(n)
-```
-
-Example:
-
-```
-[Codeforces 1000A] Implements greedy sorting algorithm
-
-Uses STL sort with custom comparator for optimal performance.
-Verified with multiple test cases including edge cases.
-
-Files: src/1000A/solution.cpp
-Time Complexity: O(n log n)
-Space Complexity: O(n)
-```
-
-## Common Issues & Solutions
-
-### Issue: `cf: command not found`
-
-**Solution:**
-
-```bash
-# Re-run setup
-bash scripts/setup.sh
-
-# Reload shell
-source ~/.bashrc  # or ~/.zshrc
-```
-
-### Issue: Compilation fails with C++23
-
-**Solution:**
-
-```bash
-# Check compiler version
-g++ --version
-
-# Install newer compiler
-bash scripts/setup.sh
-
-# Or use clang++
-export CXX=clang++
-```
-
-### Issue: Slow compilation
-
-**Solution:**
-
-- Precompiled headers (advanced)
-- Use `-O1` instead of `-O2` for development
-- Split into smaller .cpp files
-
-## Algorithm Resources
-
-### Recommended Resources
-
-- **Competitive Programming Handbook** by Antti Laaksonen
-- **CP-Algorithms** (cp-algorithms.com)
-- **Codeforces Blogs** and editorial posts
-- **GeeksforGeeks** DSA tutorials
-
-### Template Categories (in `templates/`)
-
-- `graph.cpp` - Graph algorithms (BFS, DFS, Dijkstra)
-- `dp.cpp` - Dynamic programming patterns
-- `math.cpp` - Mathematical functions
-- `string.cpp` - String algorithms (coming soon)
-- `segment_tree.cpp` - Advanced data structures (coming soon)
-
-## Performance Tips
-
-### Fast I/O Alternatives
-
-```cpp
-// Option 1: Standard fast I/O
-ios::sync_with_stdio(false);
-cin.tie(nullptr);
-
-// Option 2: With output optimization
-ios::sync_with_stdio(false);
-cin.tie(nullptr);
-cout.tie(nullptr);
-
-// Option 3: Use scanf/printf for extreme speed
-#include <cstdio>
-scanf("%d", &n);
-printf("%d\n", result);
-```
-
-### Memory Optimization
-
-```cpp
-// Reserve space if you know size
-vector<int> v;
-v.reserve(1000000);  // Allocate space upfront
-
-// Use iterators instead of indexing in hot loops
-for (auto it = v.begin(); it != v.end(); ++it) {
-    // Process *it
-}
-```
-
-## Submitting to Codeforces
-
-1. **Verify locally first:**
-
-   ```bash
-   cf problem_name input.txt
-   ```
-
-2. **Copy to submission:**
-
-   ```bash
-   cp src/problem_name/solution.cpp submission.cpp
-   ```
-
-3. **Submit on Codeforces** using the web interface
-
-## Questions?
-
-Refer to the main `README.md` or check the template files for examples.
-
-Happy coding!
+- `scripts/`: Core bash tools.
+- `web/`: Next.js web workbench.
+- `src/`: User solutions area.
+- `templates/`: C++ algorithm templates.
+- `include/`: Shared C++ headers.
+- `tests/`: Automated test suite for the toolkit itself.
+
+## Style Guidelines
+
+### Bash
+- Use `[[ ]]` instead of `[ ]` for conditions.
+- Quote variables to prevent word splitting.
+- Use meaningful names for functions.
+
+### C++
+- Follow the patterns in `src/template.cpp`.
+- Use modern C++ features (C++20/23).
+- Keep performance in mind (Fast I/O, efficient algorithms).
+
+### TypeScript/React
+- Use functional components and hooks.
+- Follow Tailwind CSS best practices.
+- Ensure components are accessible.
+
+## Commit Messages
+We follow a simple convention for commit messages:
+- `feat:` for new features.
+- `fix:` for bug fixes.
+- `docs:` for documentation changes.
+- `refactor:` for code changes that neither fix a bug nor add a feature.
+- `chore:` for updating build tasks, etc.
+
+Example: `feat: add support for interactive problems in web UI`
+
+## Code of Conduct
+Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project you agree to abide by its terms.

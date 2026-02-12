@@ -266,6 +266,31 @@ setup_vscode() {
     print_success "VS Code extensions installed"
 }
 
+# ==================== WEB WORKBENCH SETUP ====================
+
+setup_web_workbench() {
+    print_header "Setting up Web Workbench"
+
+    if ! command_exists node; then
+        print_warning "Node.js not found. Web Workbench requires Node.js 18+."
+        print_info "Skipping web setup. You can install Node.js later and run 'npm install' in the 'web' directory."
+        return
+    fi
+
+    NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
+    if [ "$NODE_VERSION" -lt 18 ]; then
+        print_warning "Node.js version $NODE_VERSION is too old. Web Workbench requires Node.js 18+."
+        return
+    fi
+
+    print_info "Installing web dependencies (this may take a minute)..."
+    if cd "$(dirname "${BASH_SOURCE[0]}")/../web" && npm install --quiet; then
+        print_success "Web Workbench dependencies installed"
+    else
+        print_warning "Failed to install web dependencies automatically."
+    fi
+}
+
 # ==================== CF COMMAND SETUP ====================
 
 setup_cf_command() {
@@ -435,6 +460,7 @@ main() {
     fi
 
     setup_cf_command
+    setup_web_workbench
 
     if [[ "$CF_SETUP_EDITORS" == "1" ]]; then
         echo

@@ -1,247 +1,167 @@
-# cf - My C++ Toolkit for Competitive Programming
+<div align="center">
 
-I built this toolkit to make solving problems on Codeforces faster and less error-prone. It's a simple, reliable setup for C++ competitive programming that I use every day. It handles the boilerplate, so you can focus on the algorithm.
+# 🚀 cf Toolkit
+
+**The Ultimate C++ Competitive Programming Workbench**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Language](https://img.shields.io/badge/language-C%2B%2B-blue.svg)](README.md)
-[![Platform](https://img.shields.io/badge/platform-Linux%2BmacOS%2BWSL-green.svg)](README.md)
+[![C++](https://img.shields.io/badge/C++-23-blue.svg)](https://en.cppreference.com/w/cpp/23)
+[![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
+[![Tailwind](https://img.shields.io/badge/Tailwind-4-38B2AC.svg)](https://tailwindcss.com/)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL2-success.svg)](README.md)
 
-## What it does
+[**Explore Features**](#-key-features) • [**Web Workbench**](#-new-web-workbench) • [**Installation**](#-installation) • [**Quick Start**](#-quick-start)
 
-This toolkit is designed to automate the boring parts of competitive programming:
+</div>
 
-*   **Prevents common mistakes:** It protects against infinite loops with a timeout, validates input, and can even detect integer overflows.
-*   **Speeds up your workflow:** You get a fast I/O template, one-command compilation and testing, and auto-parsing of example cases from the problem statement.
-*   **Helps you debug:** The tool gives you clear error messages, and you can easily compile with debug symbols. It also automatically compares your solution's output against the example's expected output.
-*   **Gets you started quickly:** A single command sets up a new problem directory with a clean `solution.cpp` and `problem.txt`.
+---
 
-## Installation
+## 📖 About
 
-### Quick Setup (Recommended)
+`cf` is a high-performance toolkit designed to eliminate the boilerplate and friction of competitive programming. Whether you're a Codeforces veteran or just starting out, `cf` provides the tools you need to solve, test, and debug problems with lightning speed.
+
+> [!NOTE]
+> With a powerful **Bash CLI** and a brand-new **Next.js Web Workbench**, you can manage your entire workflow from the terminal or a beautiful, responsive UI. They stay perfectly in sync.
+
+---
+
+## ✨ Key Features
+
+- 🏎️ **Optimized C++ Templates:** Start every problem with a battle-tested `template.cpp` featuring fast I/O and essential utilities.
+- 🛠️ **Automated Problem Setup:** Generate a full workspace (solution + sample cases) for any problem with a single command.
+- 🧪 **Smart Test Runner:** Automatically parse example cases and compare your output against expected results.
+- 🛡️ **Safety First:** Built-in protection against infinite loops (timeouts), integer overflows, and runtime errors.
+- 📂 **Algorithm Library:** Dedicated `templates/` folder to store and reuse your DP, Graph, and Math snippets.
+- 🔄 **CLI-Web Sync:** Use the CLI for setup and the Web Workbench for interactive coding—they stay perfectly in sync.
+
+---
+
+## 🖥️ New: Web Workbench
+
+The `cf` Web Workbench brings a modern IDE experience to your local problem-solving.
+
+<div align="center">
+  <img src="docs/assets/workbench-ui.png" alt="Web Workbench UI" width="800">
+  <p><i>A beautiful, responsive workspace for deep focus.</i></p>
+</div>
+
+### Features of the Web UI:
+- **Split-Pane Design:** View problem statements, code, and results side-by-side.
+- **Modern Code Editor:** C++ syntax highlighting with line numbers and indent guides.
+- **Interactive Results:** Visual feedback on "Accepted", "Wrong Answer", and "Runtime Error".
+- **Real-time Statistics:** Track execution time and memory usage for every run.
+- **Sample Management:** Easily toggle between multiple sample cases or inject custom input.
+- **Integrated Timer:** Keep track of your solving time just like in a real contest.
+
+---
+
+## 🛠️ Advanced CLI Usage
+
+The `cf` command is a Swiss Army Knife for the terminal:
+
+| Command | Description |
+| ------- | ----------- |
+| `cf template <name>` | Scaffolds a new problem directory with solution and samples. |
+| `cf serve [name]` | Launches the Web Workbench (optionally starts a new problem). |
+| `cf` | Automatically detects `problem.txt`, compiles, and runs against sample #1. |
+| `cf -s 2` | Runs your solution against sample #2 from the problem statement. |
+| `cf "5\n1 2 3"` | Runs your solution with inline input. |
+| `cf test` | Runs ALL sample cases and provides a detailed summary + diffs. |
+| `cf update` | Pulls the latest toolkit changes and re-runs setup. |
+
+### Build Caching
+> [!TIP]
+> `cf` automatically hashes your source files and compiler flags. If nothing has changed, it skips compilation and runs the cached binary instantly—saving you precious seconds during contests!
+
+---
+
+## 🛠️ Tech Stack
+
+- **Core:** Bash 4.0+, GNU Make
+- **Frontend:** Next.js 15 (App Router), React 19, TypeScript
+- **Styling:** Tailwind CSS 4, Shadcn UI, Lucide Icons
+- **C++:** C++23 (standard), g++/clang++
+
+---
+
+## 🚀 Installation
+
+### Quick Setup
 
 ```bash
 # Clone the repository
 git clone https://github.com/mbn-code/cf.git
 cd cf
 
-# Run setup script (installs compiler, tools, and configures globally)
+# Run the installer (installs dependencies and configures PATH)
 bash scripts/setup.sh
-
-# Add to PATH (if not done automatically)
-export PATH="$PATH:$(pwd)/scripts"
 ```
 
-### Manual Setup
-
-If you prefer, you can set it up manually. You'll need:
-
-*   g++ 14+ or clang++ 15+
-*   make
-*   bash 4.0+
-
-You can check if things are working by running `make help`.
-
-### Windows (WSL2)
-
-Just use WSL2 and follow the Linux setup. I'd recommend Ubuntu 22.04 or newer.
-
-## How to Use It
-
-### Start a New Problem
-
-```bash
-# Create a template for problem 1000A
-cf template 1000A
-cd 1000A
-```
-This creates a new directory `1000A/` with `solution.cpp` and `problem.txt`. I usually open these in VS Code: `code problem.txt solution.cpp`.
-
-### Write Your Code
-Paste the problem statement into `problem.txt` and write your code in `solution.cpp`.
-
-### Run Your Solution
-
-Once you're in the problem directory:
-
-```bash
-# Run with the input from problem.txt's examples
-cf
-
-# Run with sample #2 from problem.txt
-cf --sample 2
-
-# With a specific input file
-cf path/to/input.txt
-
-# With inline input
-cf "5\n1 2 3 4 5"
-
-# If you need to type input manually
-cf --stdin
-```
-
-### Run the Tests
-```bash
-# Run the main test script
-cf test
-```
-
-### Stay Updated
-```bash
-# Update cf to the latest version from git
-cf update
-```
-
-### Using the Makefile
-The `cf` script is what I use most of the time, but there's also a `Makefile` for more standard build tasks.
-
-```bash
-# Compile all solutions in src/
-make
-
-# Compile and run a specific problem's solution
-make run FILE=1000A
-
-# Compile with debug symbols
-make debug FILE=1000A
-
-# Clean build artifacts
-make clean
-```
-
-## Tips for Solving Problems
-
-A few things to keep in mind:
-
-### 1. Always Validate Input Ranges
-
-The template has helpers for this. Use them!
-
-```cpp
-// GOOD: Validate against problem constraints
-int n = readInt(1, 1000000);  // Min=1, Max=1M
-
-// BAD: No validation
-int n;
-cin >> n;
-```
-
-### 2. Use `long long` for Big Numbers
-
-Integer overflow is a common source of wrong answers.
-
-```cpp
-// GOOD: Prevents overflow
-ll sum = 0;
-for (int x : arr) {
-    sum += x;
-}
-
-// BAD: Integer overflow if sum > 2^31-1
-int sum = 0;
-for (int x : arr) {
-    sum += x;
-}
-```
-
-### 3. Fast I/O is Your Friend
-
-The template enables this by default. It can make a huge difference on problems with large inputs.
-
-```cpp
-// Included in template.cpp:
-ios::sync_with_stdio(false);
-cin.tie(nullptr);
-cout.tie(nullptr);
-```
-
-### 4. Test Edge Cases
-
-Always think about:
-*   Empty input (`n=0`)
-*   Minimum size (`n=1`)
-*   Maximum size (`n=10^5`)
-*   All zeros, all max values
-*   Negative numbers
-
-### 5. Be Mindful of Timeouts
-
-The tool will stop your code after 5 seconds. If you're getting a timeout, you probably need a more efficient algorithm (e.g., O(n log n) instead of O(n²)).
-
-## Recommended Workflow
-
-### Pre-Submission Checklist
-Before submitting to Codeforces, I usually do a quick check:
-- Run `cf test` to make sure everything compiles.
-- Test edge cases (n=1, n=max).
-- Double-check that the output format matches the examples exactly.
-- Make sure fast I/O is enabled.
-- Think about potential integer overflows.
-
-### Common Issues
-
-| Issue                  | Cause                                 | Solution                                             |
-| ---------------------- | ------------------------------------- | ---------------------------------------------------- |
-| **Compilation fails**  | Missing headers or syntax error       | The `cf` tool shows compilation errors; fix and retry    |
-| **Wrong answer (WA)**  | Logic error or output format mismatch | Compare your output with the expected output from `cf` |
-| **Time limit (TLE)**   | Too slow algorithm                    | Use fast I/O, better algorithm (O(n log n) vs O(n²)) |
-| **Runtime error (RE)** | Segfault, buffer overflow             | Use bounds checking, validate array indices          |
-| **Presentation error** | Extra spaces or missing newline       | Check output format carefully                        |
-
-### Troubleshooting
-
-#### "No C++ compiler found"
-
-```bash
-# Ubuntu/Debian
-sudo apt install g++ make
-
-# macOS
-brew install gcc make
-
-# WSL
-sudo apt install build-essential
-```
-
-#### "Repository structure not found"
-You're probably not in the right directory. `cd` into the cloned `cf` repo.
-
-#### Template is outdated or missing functions
-Run `cf update` to get the latest version.
-
-## How it's Organized
-
-```
-cf/
-├── src/                    # Where the main C++ solution template lives
-├── problems/               # Staging area for the problem I'm currently working on
-│   ├── problem.txt         # The problem description
-│   └── solution.c++        # The code for the current problem
-├── include/                # Shared C++ headers
-│   └── stl_utilities.h     # Some helper functions
-├── templates/              # Reusable code for common algorithms (DP, graphs, etc.)
-├── scripts/                # The core tools
-│   ├── cf                  # The main CLI script
-│   ├── build.sh            # Build script
-│   ├── test.sh             # Test runner
-│   └── setup.sh            # Setup script
-├── tests/                  # Test data and fixtures
-├── docs/                   # Extra documentation
-├── build/                  # Build artifacts
-├── Makefile                # Makefile for traditional builds
-└── README.md               # You are here
-```
-
-## Compiler Flags
-
-The Makefile and scripts use these flags by default:
-
-```makefile
--std=c++23       # Use modern C++
--O2              # Optimize for speed
--Wall -Wextra    # Show all warnings
-```
+> [!IMPORTANT]
+> Ensure you have a modern C++ compiler (`g++-14` or `clang++-15`), `make`, and `node` (for the Web UI).
 
 ---
 
-I hope this helps you solve problems more efficiently. If you have any suggestions, feel free to open an issue or PR. Happy coding!
+## ⚡ Quick Start
+
+### 1. Initialize a Problem
+```bash
+cf template 123A
+cd 123A
+```
+
+> [!TIP]
+> Use `<kbd>cd</kbd>` into the problem directory to enable automatic `problem.txt` detection for the `cf` command.
+
+### 2. Solve & Test (CLI)
+Edit `solution.cpp`, then run:
+```bash
+cf      # Run against sample cases
+cf test # Run full test suite
+```
+
+### 3. Launch Web Workbench
+```bash
+cd web
+npm install && npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+> [!CAUTION]
+> The Web Workbench runs a local development server. Ensure you only run it in trusted environments as it has access to your local filesystem to read/write solutions.
+
+---
+
+## 📂 Repository Structure
+
+<details>
+<summary>Click to expand folder details</summary>
+
+```text
+cf/
+├── scripts/       # CLI Tools (cf, setup, test)
+├── web/           # Next.js Web Workbench
+├── src/           # Problem solutions (workspace)
+├── templates/     # Reusable algorithm snippets
+├── include/       # Shared C++ headers
+├── docs/          # Detailed documentation
+└── tests/         # Toolkit self-tests
+```
+
+</details>
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+  Built with ❤️ for the Competitive Programming Community.
+</div>

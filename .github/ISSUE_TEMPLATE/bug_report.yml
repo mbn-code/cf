@@ -1,0 +1,50 @@
+name: Bug Report
+description: Report a bug to help us improve the toolkit
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Run 'cf template 1000A'
+        2. Edit solution.cpp...
+        3. Run 'cf'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: A clear and concise description of what you expected to happen.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Toolkit Version
+      description: What version of the toolkit are you using? (Run 'cf --version' or check footer in Web UI)
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS (Ubuntu, macOS, WSL), Compiler version, etc.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: Please copy and paste any relevant log output or error messages.
+      render: shell
