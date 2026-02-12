@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀 cf Toolkit
+# cf Toolkit
 
 **The Ultimate C++ Competitive Programming Workbench**
 
@@ -16,7 +16,7 @@
 
 ---
 
-## 📖 About
+## About
 
 `cf` is a high-performance toolkit designed to eliminate the boilerplate and friction of competitive programming. Whether you're a Codeforces veteran or just starting out, `cf` provides the tools you need to solve, test, and debug problems with lightning speed.
 
@@ -25,18 +25,18 @@
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-- 🏎️ **Optimized C++ Templates:** Start every problem with a battle-tested `template.cpp` featuring fast I/O and essential utilities.
-- 🛠️ **Automated Problem Setup:** Generate a full workspace (solution + sample cases) for any problem with a single command.
-- 🧪 **Smart Test Runner:** Automatically parse example cases and compare your output against expected results.
-- 🛡️ **Safety First:** Built-in protection against infinite loops (timeouts), integer overflows, and runtime errors.
-- 📂 **Algorithm Library:** Dedicated `templates/` folder to store and reuse your DP, Graph, and Math snippets.
-- 🔄 **CLI-Web Sync:** Use the CLI for setup and the Web Workbench for interactive coding—they stay perfectly in sync.
+- **Optimized C++ Templates:** Start every problem with a battle-tested `template.cpp` featuring fast I/O and essential utilities.
+- **Automated Problem Setup:** Generate a full workspace (solution + sample cases) for any problem with a single command.
+- **Smart Test Runner:** Automatically parse example cases and compare your output against expected results.
+- **Safety First:** Built-in protection against infinite loops (timeouts), integer overflows, and runtime errors.
+- **Algorithm Library:** Dedicated `templates/` folder to store and reuse your DP, Graph, and Math snippets.
+- **CLI-Web Sync:** Use the CLI for setup and the Web Workbench for interactive coding—they stay perfectly in sync.
 
 ---
 
-## 🖥️ New: Web Workbench
+## New: Web Workbench
 
 The `cf` Web Workbench brings a modern IDE experience to your local problem-solving.
 
@@ -55,7 +55,7 @@ The `cf` Web Workbench brings a modern IDE experience to your local problem-solv
 
 ---
 
-## 🛠️ Advanced CLI Usage
+## Advanced CLI Usage
 
 The `cf` command is a Swiss Army Knife for the terminal:
 
@@ -75,7 +75,7 @@ The `cf` command is a Swiss Army Knife for the terminal:
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 - **Core:** Bash 4.0+, GNU Make
 - **Frontend:** Next.js 15 (App Router), React 19, TypeScript
@@ -84,7 +84,7 @@ The `cf` command is a Swiss Army Knife for the terminal:
 
 ---
 
-## 🚀 Installation
+## Installation
 
 ### Quick Setup
 
@@ -102,7 +102,7 @@ bash scripts/setup.sh
 
 ---
 
-## ⚡ Quick Start
+## Quick Start
 
 ### 1. Initialize a Problem
 ```bash
@@ -132,7 +132,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 📂 Repository Structure
+## Repository Structure
 
 <details>
 <summary>Click to expand folder details</summary>
@@ -152,16 +152,16 @@ cf/
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started.
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
 <div align="center">
-  Built with ❤️ for the Competitive Programming Community.
+  Built with for the Competitive Programming Community.
 </div>
