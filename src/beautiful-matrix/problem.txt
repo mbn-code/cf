@@ -1,0 +1,9 @@
+# Paste the problem statement here from Codeforces
+
+Examples
+Input
+
+
+Output
+
+

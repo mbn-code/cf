@@ -8,14 +8,16 @@
 # Usage:
 #   cf template <name>         - Create new problem template
 #   cf <name> [input]          - Compile and run solution
-#   cf test                    - Run test suite with validation
-#   cf help                    - Show help
+#   cf test                    - Run all tests with timeout protection
+#   cf serve [problem]         - Start web interface
 #
 # Examples:
 #   cf template 1000A          - Create src/1000A/ with solution.cpp
 #   cf 1000A input.txt         - Compile and run with input.txt
 #   cf 1000A "5\n1 2 3 4 5"    - Compile and run with inline input
 #   cf test                    - Run all tests with timeout protection
+#   cf serve                   - Start web interface
+#   cf serve 1000A             - Create (if needed) and serve problem 1000A
 #
 # Features:
 #   - Auto-detects .cpp files
@@ -76,11 +78,19 @@ CXXFLAGS_DEFAULT="-std=c++23 -O2 -Wall -Wextra"
 EXEC_TIMEOUT_DEFAULT=5
 
 # Color codes
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+if [ -t 1 ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    NC=''
+fi
 
 # Logging
 VERBOSE=${CF_VERBOSE:-0}
@@ -126,6 +136,12 @@ print_debug() {
     if [ "$VERBOSE" -eq 1 ]; then
         printf '%b\n' "${BLUE}[DEBUG] $1${NC}" >&2
     fi
+}
+
+print_header() {
+    printf '%b\n' "${BLUE}═══════════════════════════════════════${NC}"
+    printf '%b\n' "${BLUE}$1${NC}"
+    printf '%b\n' "${BLUE}═══════════════════════════════════════${NC}"
 }
 
 is_tty() {
@@ -227,9 +243,8 @@ compute_sources_hash() {
     } | eval "$hash_cmd" | awk '{print $1}'
 }
 
-# Safe execution with timeout
+# Safe execution with timeout and resource tracking
 safe_execute() {
-
     local output_file=""
     if [[ "$1" == --output=* ]]; then
         output_file="${1#--output=}"
@@ -239,43 +254,60 @@ safe_execute() {
     local input_file="${2:-}"
     local timeout_sec="${EXEC_TIMEOUT}"
 
-    if check_timeout_cmd;
-        then
+    local time_log
+    time_log=$(mktemp)
+    add_cleanup "$time_log"
+
+    local cmd=()
+    if check_timeout_cmd; then
+        cmd+=("$TIMEOUT_CMD" "$timeout_sec")
+    fi
+    cmd+=("$binary")
+
+    local exit_code=0
+    
+    if [ -x "/usr/bin/time" ]; then
         if [ -n "$output_file" ]; then
             if [ -n "$input_file" ] && [ -f "$input_file" ]; then
-                "$TIMEOUT_CMD" "$timeout_sec" "$binary" < "$input_file" > "$output_file" 2>&1
+                /usr/bin/time -f "RESOURCE_USAGE: %e %M" -o "$time_log" "${cmd[@]}" < "$input_file" > "$output_file" 2>&1
             else
-                "$TIMEOUT_CMD" "$timeout_sec" "$binary" > "$output_file" 2>&1
+                /usr/bin/time -f "RESOURCE_USAGE: %e %M" -o "$time_log" "${cmd[@]}" > "$output_file" 2>&1
             fi
         else
             if [ -n "$input_file" ] && [ -f "$input_file" ]; then
-                "$TIMEOUT_CMD" "$timeout_sec" "$binary" < "$input_file" 2>&1
+                /usr/bin/time -f "RESOURCE_USAGE: %e %M" -o "$time_log" "${cmd[@]}" < "$input_file" 2>&1
             else
-                "$TIMEOUT_CMD" "$timeout_sec" "$binary" 2>&1
+                /usr/bin/time -f "RESOURCE_USAGE: %e %M" -o "$time_log" "${cmd[@]}" 2>&1
             fi
         fi
-        local exit_code=$?
-        if [ $exit_code -eq 124 ]; then
-            print_error "Execution timeout (exceeded ${timeout_sec}s)"
-            return 1
-        elif [ $exit_code -ne 0 ]; then
-            print_error "Runtime error (exit code: $exit_code)"
-            return 1
-        fi
+        exit_code=$?
+        # Print resource usage to stdout for the web UI to capture
+        cat "$time_log" 2>/dev/null || true
     else
         if [ -n "$output_file" ]; then
             if [ -n "$input_file" ] && [ -f "$input_file" ]; then
-                "$binary" < "$input_file" > "$output_file" 2>&1
+                "${cmd[@]}" < "$input_file" > "$output_file" 2>&1
             else
-                "$binary" > "$output_file" 2>&1
+                "${cmd[@]}" > "$output_file" 2>&1
             fi
         else
             if [ -n "$input_file" ] && [ -f "$input_file" ]; then
-                "$binary" < "$input_file" 2>&1
+                "${cmd[@]}" < "$input_file" 2>&1
             else
-                "$binary" 2>&1
+                "${cmd[@]}" 2>&1
             fi
         fi
+        exit_code=$?
+    fi
+
+    if [ $exit_code -eq 124 ]; then
+        print_error "Execution timeout (exceeded ${timeout_sec}s)"
+        return 1
+    elif [ $exit_code -ne 0 ]; then
+        # We don't always want to return 1 here because some solutions might return non-zero but still be correct (though rare in CP)
+        # But for Codeforces, exit code should be 0.
+        print_error "Runtime error (exit code: $exit_code)"
+        return 1
     fi
     return 0
 }
@@ -518,18 +550,20 @@ EOF
     fi
 
     # Open files in VS Code if available
-    if command -v code &> /dev/null;
+    if [ "${CF_SERVE_MODE:-0}" -eq 0 ] && command -v code &> /dev/null;
         then
         print_info "Opening files in VS Code..."
         code "$problem_file" "$solution_file" 2>/dev/null || true
         print_success "Opened in VS Code"
     fi
 
-    printf '\n'
-    printf '%s\n' "Next steps:"
-    printf '%s\n' "  1. Paste problem statement in $problem_file"
-    printf '%s\n' "  2. Edit solution in $solution_file"
-    printf '%s\n' "  3. cd $problem_name && cf problem.txt"
+    if [ "${CF_SERVE_MODE:-0}" -eq 0 ]; then
+        printf '\n'
+        printf '%s\n' "Next steps:"
+        printf '%s\n' "  1. Paste problem statement in $problem_file"
+        printf '%s\n' "  2. Edit solution in $solution_file"
+        printf '%s\n' "  3. cd $problem_name && cf problem.txt"
+    fi
 }
 
 # ==================== RUN COMMAND ====================
@@ -579,6 +613,17 @@ cmd_run() {
 
     if ! [[ "$sample_index" =~ ^[0-9]+$ ]] || [ "$sample_index" -lt 1 ]; then
         error_exit "Invalid sample index: $sample_index" "$EXIT_USAGE"
+    fi
+
+    # Handle directory as input_arg
+    if [ -n "$input_arg" ] && [ ! -f "$input_arg" ]; then
+        if [ -d "$input_arg" ] && [ -f "$input_arg/problem.txt" ]; then
+            input_arg="$input_arg/problem.txt"
+        elif [ -d "$SRC_DIR/$input_arg" ] && [ -f "$SRC_DIR/$input_arg/problem.txt" ]; then
+            input_arg="$SRC_DIR/$input_arg/problem.txt"
+        elif [ "$(basename "$PWD")" = "$input_arg" ] && [ -f "$PWD/problem.txt" ]; then
+            input_arg="$PWD/problem.txt"
+        fi
     fi
 
     if [ "$use_stdin" -eq 0 ] && [ -z "$input_arg" ] && [ -f "$PWD/problem.txt" ]; then
@@ -754,8 +799,141 @@ cmd_run() {
 
 # ==================== TEST COMMAND ====================
 
+cmd_test_all() {
+    local prob_dir="$1"
+    local prob_file="$prob_dir/problem.txt"
+    
+    validate_dir "$prob_dir"
+    validate_file "$prob_file"
+    
+    # Find .cpp files
+    mapfile -t cpp_files < <(find "$prob_dir" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
+    if [ ${#cpp_files[@]} -eq 0 ]; then
+        error_exit "No C++ file found in $prob_dir" "$EXIT_USAGE"
+    fi
+
+    print_info "Testing problem in: $prob_dir"
+    print_info "Found ${#cpp_files[@]} source file(s)"
+
+    # Compile
+    local output_binary
+    output_binary=$(mktemp)
+    add_cleanup "$output_binary"
+    
+    print_info "Compiling..."
+    if ! safe_compile "$output_binary" "${cpp_files[@]}"; then
+        return 1
+    fi
+    chmod +x "$output_binary"
+
+    local sample_count
+    sample_count=$(count_samples "$prob_file")
+    
+    if [ "$sample_count" -eq 0 ]; then
+        print_warning "No samples found in $prob_file"
+        return 0
+    fi
+
+    print_info "Found $sample_count samples. Starting tests..."
+    
+    local passed=0
+    local failed=0
+
+    for ((i=1; i<=sample_count; i++)); do
+        printf '\n'
+        print_info "Running Sample #$i..."
+        
+        local temp_input
+        local temp_expected
+        local temp_actual
+        temp_input=$(mktemp)
+        temp_expected=$(mktemp)
+        temp_actual=$(mktemp)
+        add_cleanup "$temp_input"
+        add_cleanup "$temp_expected"
+        add_cleanup "$temp_actual"
+
+        if ! extract_test_input "$prob_file" "$i" > "$temp_input"; then
+            print_warning "Failed to extract input for sample #$i"
+            continue
+        fi
+        
+        local expected_data
+        expected_data=$(extract_expected_output "$prob_file" "$i") || true
+        printf '%s' "$expected_data" > "$temp_expected"
+
+        if ! safe_execute --output="$temp_actual" "$output_binary" "$temp_input"; then
+            print_error "Sample #$i: Runtime Error or Timeout"
+            failed=$((failed + 1))
+            continue
+        fi
+
+        # Compare
+        local norm_actual
+        local norm_expected
+        norm_actual=$(mktemp)
+        norm_expected=$(mktemp)
+        add_cleanup "$norm_actual"
+        add_cleanup "$norm_expected"
+        
+        normalize_output "$(cat "$temp_actual")" > "$norm_actual"
+        normalize_output "$expected_data" > "$norm_expected"
+
+        if cmp -s "$norm_actual" "$norm_expected"; then
+            print_success "Sample #$i: PASSED"
+            passed=$((passed + 1))
+        else
+            print_error "Sample #$i: FAILED (Output Mismatch)"
+            printf "${YELLOW}Input Used:${NC}\n"
+            cat "$temp_input" | sed 's/^/  /'
+            printf "${YELLOW}Expected Output:${NC}\n"
+            printf '%s\n' "$expected_data" | sed 's/^/  /'
+            printf "${YELLOW}Your Output:${NC}\n"
+            cat "$temp_actual" | sed 's/^/  /'
+            
+            # Show diff if possible
+            if command -v diff &> /dev/null; then
+                printf "${YELLOW}Diff:${NC}\n"
+                diff -u "$norm_expected" "$norm_actual" | sed 's/^/  /' || true
+            fi
+            failed=$((failed + 1))
+        fi
+    done
+
+    printf '\n'
+    print_header "Test Summary"
+    print_info "Total: $sample_count | Passed: ${GREEN}$passed${NC} | Failed: ${RED}$failed${NC}"
+    
+    if [ "$failed" -eq 0 ]; then
+        print_success "All problem samples passed!"
+        return 0
+    else
+        return 1
+    fi
+}
+
 cmd_test() {
-    print_info "Running test suite..."
+    local arg="${1:-}"
+    
+    # Check if we are in a problem directory or argument is a problem
+    local prob_dir=""
+    if [ -f "$PWD/problem.txt" ]; then
+        prob_dir="$PWD"
+    elif [ -n "$arg" ]; then
+        if [ -d "$PWD/$arg" ] && [ -f "$PWD/$arg/problem.txt" ]; then
+            prob_dir="$PWD/$arg"
+        elif [ -d "$SRC_DIR/$arg" ] && [ -f "$SRC_DIR/$arg/problem.txt" ]; then
+            prob_dir="$SRC_DIR/$arg"
+        fi
+    fi
+
+    if [ -n "$prob_dir" ]; then
+        cmd_test_all "$prob_dir"
+        return $?
+    fi
+
+    # Fallback to toolkit internal tests
+    print_info "No problem context found. Running toolkit test suite..."
 
     if [ ! -f "$SCRIPTS_DIR/test.sh" ]; then
         print_warning "Test script not found: $SCRIPTS_DIR/test.sh"
@@ -864,6 +1042,56 @@ cmd_update() {
     printf '%s\n' "Run 'cf help' to see all available commands"
 }
 
+# ==================== SERVE COMMAND ====================
+
+cmd_serve() {
+    local problem_name="${1:-}"
+    local problems_dir="${CF_PROBLEMS_DIR:-}"
+
+    if [ -z "$problems_dir" ]; then
+        if [ -n "$problem_name" ] && [ -d "$PWD/$problem_name" ]; then
+            problems_dir="$PWD"
+        elif [ -n "$problem_name" ] && [ -d "$SRC_DIR/$problem_name" ]; then
+            problems_dir="$SRC_DIR"
+        elif [ "$PWD" != "$REPO_ROOT" ] && [ "$PWD" != "$SCRIPTS_DIR" ] && [ "$PWD" != "$SRC_DIR" ]; then
+            problems_dir="$PWD"
+        else
+            problems_dir="$SRC_DIR"
+        fi
+    fi
+
+    # Ensure absolute path
+    problems_dir="$(cd "$problems_dir" 2>/dev/null && pwd || echo "$problems_dir")"
+
+    if [ -n "$problem_name" ]; then
+        if [ ! -d "$problems_dir/$problem_name" ]; then
+            print_info "Problem $problem_name not found in $problems_dir. Creating from template..."
+            (cd "$problems_dir" && CF_SERVE_MODE=1 cmd_template "$problem_name")
+        fi
+        export CF_START_PROBLEM="$problem_name"
+    fi
+
+    export CF_PROBLEMS_DIR="$problems_dir"
+    export CF_SERVE_MODE=1
+    
+    print_info "Starting CF Toolkit Web Interface..."
+    print_info "Problems directory: $problems_dir"
+    
+    if [ ! -d "$REPO_ROOT/web" ]; then
+        error_exit "Web interface directory not found: $REPO_ROOT/web" "$EXIT_IO"
+    fi
+
+    cd "$REPO_ROOT/web"
+    
+    if [ ! -d "node_modules" ]; then
+        print_info "Installing dependencies..."
+        npm install
+    fi
+
+    # Use exec to replace the shell process and ensure signals are handled
+    exec npm run dev
+}
+
 # ==================== HELP COMMAND ====================
 
 cmd_help() {
@@ -877,11 +1105,14 @@ USAGE:
 COMMANDS:
   template <name>    Create new problem template
   test               Run test suite with validation
+  serve [name]       Start web interface (auto-creates problem if name given)
   update             Update cf tool to latest version
   help               Show this help message
 
 EXAMPLES:
   cf template 1000A           Create new problem 1000A
+  cf serve                    Start web interface
+  cf serve 1000A              Create (if needed) and serve 1000A in web
   cf problem.txt              Run solution with input from file
   cf problem.txt 2            Run sample #2 from problem.txt
   cf --sample 2               Run sample #2 from problem.txt (auto)
@@ -900,21 +1131,22 @@ FEATURES:
     - Build caching for faster repeated runs
     - Cross-platform (Linux/macOS/WSL)
     - Production-grade reliability
+    - Web Interface with 'cf serve'
 
 ENVIRONMENT:
-  CF_REPO_ROOT     Override repository root directory
-  CF_VERBOSE       Set to 1 for debug output
-    CF_CXXFLAGS      Override compiler flags
-    CF_TIMEOUT       Override execution timeout (seconds)
+  CF_REPO_ROOT        Override repository root directory
+  CF_PROBLEMS_DIR     Directory containing problem folders
+  CF_VERBOSE          Set to 1 for debug output
+    CF_CXXFLAGS         Override compiler flags
+    CF_TIMEOUT          Override execution timeout (seconds)
     CF_BUILD_CACHE_DIR  Override build cache location
-    CF_FORCE_REBUILD Force rebuild (set to 1)
+    CF_FORCE_REBUILD    Force rebuild (set to 1)
     CF_NONINTERACTIVE   Disable prompts (set to 1)
 
 NEXT STEPS:
-  1. Create a template: cf template 1000A
-  2. Edit the solution in 1000A/solution.cpp
-  3. Run with test input: cf problem.txt
-  4. Submit to Codeforces
+  1. Start web interface: cf serve
+  2. Or CLI: cf template 1000A
+  3. Edit solution.cpp and run: cf problem.txt
 
 For more information, visit: https://github.com/mbn-code/cf
 
@@ -943,6 +1175,9 @@ main() {
             fi
             cmd_test "$@"
             ;; 
+        serve)
+            cmd_serve "$@"
+            ;;
         update)
             cmd_update "$@"
             ;; 
