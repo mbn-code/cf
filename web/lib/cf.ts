@@ -34,7 +34,8 @@ export function parseCfOutput(stdout: string, stderr: string, exitCode: number):
     timestamp: new Date().toLocaleTimeString(),
   };
 
-  const combined = stdout + "\n" + stderr;
+  // Strip ANSI escape codes and combine
+  const combined = (stdout + "\n" + stderr).replace(/\x1B\[[0-9;]*[JKmsu]/g, '');
 
   // Parse resource usage (taking max over all runs)
   const usageMatches = Array.from(combined.matchAll(/RESOURCE_USAGE:\s*([\d.]+)\s*(\d+)/g));

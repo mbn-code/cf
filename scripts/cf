@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 ################################################################################
 # cf - Production-grade Codeforces CLI Tool
@@ -109,6 +109,9 @@ if [ -f "$CF_CONFIG_FILE" ]; then
     . "$CF_CONFIG_FILE"
 fi
 
+# Global variable to store compiler warnings
+COMPILATION_WARNINGS=""
+
 # Effective configuration
 CXXFLAGS="${CF_CXXFLAGS:-$CXXFLAGS_DEFAULT}"
 EXEC_TIMEOUT="${CF_TIMEOUT:-$EXEC_TIMEOUT_DEFAULT}"
@@ -142,6 +145,13 @@ print_header() {
     printf '%b\n' "${BLUE}═══════════════════════════════════════${NC}"
     printf '%b\n' "${BLUE}$1${NC}"
     printf '%b\n' "${BLUE}═══════════════════════════════════════${NC}"
+}
+
+print_warnings_if_any() {
+    if [ -n "${COMPILATION_WARNINGS:-}" ]; then
+        printf "\n${YELLOW}Compilation Warnings:${NC}\n"
+        printf '%s\n' "$COMPILATION_WARNINGS"
+    fi
 }
 
 is_tty() {
@@ -218,7 +228,7 @@ run_cleanup() {
         rm -f "$item" 2>/dev/null || true
     done
 }
-trap 'run_cleanup' RETURN
+trap 'run_cleanup' EXIT
 
 # Hash sources for build cache
 compute_sources_hash() {
@@ -266,7 +276,15 @@ safe_execute() {
 
     local exit_code=0
     
+    local use_time=0
     if [ -x "/usr/bin/time" ]; then
+        # Check if /usr/bin/time supports the -f flag (GNU time)
+        if /usr/bin/time -f "test" echo test &>/dev/null; then
+            use_time=1
+        fi
+    fi
+
+    if [ "$use_time" -eq 1 ]; then
         if [ -n "$output_file" ]; then
             if [ -n "$input_file" ] && [ -f "$input_file" ]; then
                 /usr/bin/time -f "RESOURCE_USAGE: %e %M" -o "$time_log" "${cmd[@]}" < "$input_file" > "$output_file" 2>&1
@@ -320,11 +338,21 @@ safe_compile() {
 
     print_debug "Compiling: ${sources[*]} -> $output"
 
-    if ! $COMPILER $CXXFLAGS -I "$INCLUDE_DIR" "${sources[@]}" -o "$output" 2>&1;
-        then
+    # Clear previous warnings
+    COMPILATION_WARNINGS=""
+
+    local compile_out
+    compile_out=$($COMPILER $CXXFLAGS -I "$INCLUDE_DIR" "${sources[@]}" -o "$output" 2>&1)
+    local ret=$?
+
+    if [ $ret -ne 0 ]; then
+        [ -n "$compile_out" ] && printf '%s\n' "$compile_out"
         print_error "Compilation failed"
-        return 1
+        return $ret
     fi
+
+    # Store warnings for later
+    COMPILATION_WARNINGS="$compile_out"
 
     return 0
 }
@@ -631,7 +659,10 @@ cmd_run() {
     fi
 
     # Find .cpp files in current directory
-    mapfile -t cpp_files < <(find "$PWD" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
+    cpp_files=()
+    while IFS= read -r file; do
+        [ -n "$file" ] && cpp_files+=("$file")
+    done < <(find "$PWD" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
     if [ ${#cpp_files[@]} -eq 0 ]; then
         error_exit "No C++ file found in current directory ($PWD)" "$EXIT_USAGE"
     fi
@@ -745,12 +776,18 @@ cmd_run() {
     local tmp_actual_output=""
     if [ -n "$temp_input" ]; then
         tmp_actual_output=$(mktemp)
-        safe_execute --output="$tmp_actual_output" "$output_file" "$temp_input" || return 1
+        if ! safe_execute --output="$tmp_actual_output" "$output_file" "$temp_input"; then
+            print_warnings_if_any
+            return 1
+        fi
         # Stream output directly to stdout, not through variable
         cat "$tmp_actual_output"
         compare_enabled=true
     else
-        safe_execute "$output_file" || return 1
+        if ! safe_execute "$output_file"; then
+            print_warnings_if_any
+            return 1
+        fi
     fi
 
     printf -- '\n---\n'
@@ -782,6 +819,7 @@ cmd_run() {
             else
                 print_warning "Output does not match expected."
                 rm -f "$tmp_actual_output" 2>/dev/null || true
+                print_warnings_if_any
                 return 1
             fi
         else
@@ -807,7 +845,10 @@ cmd_test_all() {
     validate_file "$prob_file"
     
     # Find .cpp files
-    mapfile -t cpp_files < <(find "$prob_dir" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
+    cpp_files=()
+    while IFS= read -r file; do
+        [ -n "$file" ] && cpp_files+=("$file")
+    done < <(find "$prob_dir" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
     if [ ${#cpp_files[@]} -eq 0 ]; then
         error_exit "No C++ file found in $prob_dir" "$EXIT_USAGE"
     fi
@@ -908,6 +949,7 @@ cmd_test_all() {
         print_success "All problem samples passed!"
         return 0
     else
+        print_warnings_if_any
         return 1
     fi
 }
