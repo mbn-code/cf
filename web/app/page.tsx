@@ -690,7 +690,7 @@ export default function Workbench() {
                           <TabsContent value="structured" className="flex-1 m-0 overflow-y-auto scrollbar-hide min-h-0">
                             <ResultView result={testResult} loading={loading} code={code} mounted={mounted} />
                           </TabsContent>
-                          <TabsContent value="raw" className="flex-1 m-0 overflow-auto p-5 leading-relaxed text-zinc-400 font-mono text-[11px] selection:bg-zinc-800">
+                          <TabsContent value="raw" className="flex-1 m-0 overflow-y-auto p-5 leading-relaxed text-zinc-400 font-mono text-[11px] selection:bg-zinc-800 min-h-0">
                             <pre className="whitespace-pre-wrap">{output || "Waiting for execution..."}</pre>
                           </TabsContent>
                         </Tabs>
