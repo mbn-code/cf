@@ -1,16 +1,15 @@
 <div align="center">
 
-# cf Toolkit
+# cf Workbench
 
-**The Ultimate C++ Competitive Programming Workbench**
+**A local Codeforces-style workbench for writing, running, and stress-testing C++ solutions.**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![C++](https://img.shields.io/badge/C++-23-blue.svg)](https://en.cppreference.com/w/cpp/23)
-[![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
-[![Tailwind](https://img.shields.io/badge/Tailwind-4-38B2AC.svg)](https://tailwindcss.com/)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL2-success.svg)](README.md)
+[![C++](https://img.shields.io/badge/C%2B%2B-gnu%2B%2B17%20default-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-success.svg)](README.md)
 
-[**Explore Features**](#-key-features) • [**Web Workbench**](#-new-web-workbench) • [**Installation**](#-installation) • [**Quick Start**](#-quick-start)
+[Features](#features) - [Quick start](#quick-start) - [How it works](#how-it-works) - [Documentation](#documentation)
 
 </div>
 
@@ -18,150 +17,159 @@
 
 ## About
 
-`cf` is a high-performance toolkit designed to eliminate the boilerplate and friction of competitive programming. Whether you're a Codeforces veteran or just starting out, `cf` provides the tools you need to solve, test, and debug problems with lightning speed.
+`cf` is a self-hosted workbench for competitive programming in C++. It pairs a
+browser IDE (a Next.js app under `web/`) with a server-side execution engine that
+compiles and runs your code against the **real** C++ toolchain on your machine.
+Everything runs locally: there is no sandbox VM, no remote judge, and no account.
 
-> [!NOTE]
-> With a powerful **Bash CLI** and a brand-new **Next.js Web Workbench**, you can manage your entire workflow from the terminal or a beautiful, responsive UI. They stay perfectly in sync.
+The workbench is built to make the macOS toolchain a first-class target. The
+`#include <bits/stdc++.h>` idiom is a GCC/libstdc++ detail that Apple clang does
+not ship, so the repository bundles a portable shim at
+[`include/bits/stdc++.h`](include/bits/stdc++.h) and every compile is invoked with
+`-I include`. The same flag is used by the web engine and the [`Makefile`](Makefile),
+so code that compiles in the UI compiles from the terminal too.
 
----
-
-## Key Features
-
-- **Optimized C++ Templates:** Start every problem with a battle-tested `template.cpp` featuring fast I/O and essential utilities.
-- **Automated Problem Setup:** Generate a full workspace (solution + sample cases) for any problem with a single command.
-- **Smart Test Runner:** Automatically parse example cases and compare your output against expected results.
-- **Safety First:** Built-in protection against infinite loops (timeouts), integer overflows, and runtime errors.
-- **Algorithm Library:** Dedicated `templates/` folder to store and reuse your DP, Graph, and Math snippets.
-- **CLI-Web Sync:** Use the CLI for setup and the Web Workbench for interactive coding—they stay perfectly in sync.
-
----
-
-## New: Web Workbench
-
-The `cf` Web Workbench brings a modern IDE experience to your local problem-solving.
-
-<div align="center">
-  <img src="docs/assets/workbench-ui.png" alt="Web Workbench UI" width="800">
-  <p><i>A beautiful, responsive workspace for deep focus.</i></p>
-</div>
-
-### Features of the Web UI:
-- **Split-Pane Design:** View problem statements, code, and results side-by-side.
-- **Modern Code Editor:** C++ syntax highlighting with line numbers and indent guides.
-- **Interactive Results:** Visual feedback on "Accepted", "Wrong Answer", and "Runtime Error".
-- **Real-time Statistics:** Track execution time and memory usage for every run.
-- **Sample Management:** Easily toggle between multiple sample cases or inject custom input.
-- **Integrated Timer:** Keep track of your solving time just like in a real contest.
+This is a stable release: the engine, the UI, and the build tooling are feature
+complete and the production build (`npm run build`) passes clean.
 
 ---
 
-## Advanced CLI Usage
+## Features
 
-The `cf` command is a Swiss Army Knife for the terminal:
+- **C++ editor** with Prism syntax highlighting, a synced line-number gutter,
+  soft-tab handling, and an adjustable font. Editor contents persist to
+  `localStorage` across reloads.
+- **Insertable templates** (Minimal, A + B, Fast I/O + helpers, Brute force,
+  Generator) plus a Settings panel for the language standard, per-run time limit,
+  and extra compiler flags.
+- **Run panel** that POSTs to `/api/run` with custom stdin and renders the verdict,
+  exit code, elapsed wall-clock time, compiler, and a scrollable raw terminal log
+  of stdout / stderr / compile errors.
+- **Tests panel** to add, edit, delete, and paste-and-split sample cases, then
+  _Run all_ via `/api/test` for per-case **AC / WA / TLE / RE / CE** badges with an
+  expandable, whitespace-tolerant diff.
+- **Stress panel** that compiles a solution, a brute force, and a generator, runs
+  them for a configurable number of iterations, and surfaces the first failing
+  input. It degrades gracefully if the endpoint is unavailable.
+- **Problems sidebar** to save, load, rename, and delete problems and their test
+  cases, persisted as JSON under `web/data/`.
+- **Keyboard shortcuts**: `Cmd/Ctrl+Enter` runs, `Cmd/Ctrl+Shift+Enter` runs all
+  tests, `Cmd/Ctrl+S` saves the current problem.
 
-| Command | Description |
-| ------- | ----------- |
-| `cf template <name>` | Scaffolds a new problem directory with solution and samples. |
-| `cf serve [name]` | Launches the Web Workbench (optionally starts a new problem). |
-| `cf` | Automatically detects `problem.txt`, compiles, and runs against sample #1. |
-| `cf -s 2` | Runs your solution against sample #2 from the problem statement. |
-| `cf "5\n1 2 3"` | Runs your solution with inline input. |
-| `cf test` | Runs ALL sample cases and provides a detailed summary + diffs. |
-| `cf update` | Pulls the latest toolkit changes and re-runs setup. |
-
-### Build Caching
-> [!TIP]
-> `cf` automatically hashes your source files and compiler flags. If nothing has changed, it skips compilation and runs the cached binary instantly—saving you precious seconds during contests!
-
----
-
-## Tech Stack
-
-- **Core:** Bash 4.0+, GNU Make
-- **Frontend:** Next.js 15 (App Router), React 19, TypeScript
-- **Styling:** Tailwind CSS 4, Shadcn UI, Lucide Icons
-- **C++:** C++23 (standard), g++/clang++
+See [`docs/features.md`](docs/features.md) for the complete feature guide.
 
 ---
 
-## Installation
+## Quick start
 
-### Quick Setup
+### Prerequisites
+
+- A working C++ compiler. Apple clang (`clang++` / `c++`) or GCC (`g++`) both work.
+  On macOS, install the Xcode Command Line Tools: `xcode-select --install`.
+- Node.js 20 or newer (the web app targets Next.js 16).
+
+### Run the workbench
 
 ```bash
-# Clone the repository
 git clone https://github.com/mbn-code/cf.git
-cd cf
-
-# Run the installer (installs dependencies and configures PATH)
-bash scripts/setup.sh
+cd cf/web
+npm install
+npm run dev
 ```
 
-> [!IMPORTANT]
-> Ensure you have a modern C++ compiler (`g++-14` or `clang++-15`), `make`, and `node` (for the Web UI).
+Open <http://localhost:3000>. The editor loads with an A + B program and a `2 3 -> 5`
+sample test, so you can click **Run** and see a result immediately.
+
+For a production build:
+
+```bash
+npm run build
+npm run start
+```
+
+### Build from the terminal
+
+The repository also ships a portable [`Makefile`](Makefile) that uses the same
+compiler detection and `-I include` flag as the engine:
+
+```bash
+make build FILE=src/solution.cpp   # compile one source
+make run   FILE=src/solution.cpp   # compile and run with a timeout
+make test  FILE=myproblem          # compile and diff vs src/myproblem/input.txt
+```
+
+Full setup, build, and test instructions are in
+[`docs/development.md`](docs/development.md).
 
 ---
 
-## Quick Start
+## How it works
 
-### 1. Initialize a Problem
-```bash
-cf template 123A
-cd 123A
 ```
-
-> [!TIP]
-> Use `<kbd>cd</kbd>` into the problem directory to enable automatic `problem.txt` detection for the `cf` command.
-
-### 2. Solve & Test (CLI)
-Edit `solution.cpp`, then run:
-```bash
-cf      # Run against sample cases
-cf test # Run full test suite
-```
-
-### 3. Launch Web Workbench
-```bash
-cd web
-npm install && npm run dev
-```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-> [!CAUTION]
-> The Web Workbench runs a local development server. Ensure you only run it in trusted environments as it has access to your local filesystem to read/write solutions.
-
----
-
-## Repository Structure
-
-<details>
-<summary>Click to expand folder details</summary>
-
-```text
 cf/
-├── scripts/       # CLI Tools (cf, setup, test)
-├── web/           # Next.js Web Workbench
-├── src/           # Problem solutions (workspace)
-├── templates/     # Reusable algorithm snippets
-├── include/       # Shared C++ headers
-├── docs/          # Detailed documentation
-└── tests/         # Toolkit self-tests
+|- web/                         Next.js workbench (UI + API)
+|  |- app/
+|  |  |- page.tsx               Workbench shell (editor, panels, shortcuts)
+|  |  |- api/
+|  |  |  |- _engine/            Server execution engine (Node built-ins only)
+|  |  |  |  |- cpp.ts           Compiler detection, compile, run, time-limit, caps
+|  |  |  |  |- compare.ts       Whitespace-tolerant output comparison + diff
+|  |  |  |  |- store.ts         JSON problem store under web/data
+|  |  |  |- run/                POST /api/run    - compile + run once
+|  |  |  |- test/               POST /api/test   - run many cases, AC/WA/...
+|  |  |  |- stress/             POST /api/stress - solution vs brute + generator
+|  |  |  |- problems/           CRUD for saved problems
+|  |  |  |- {config,problem-text,solution,template}/
+|  |  |- components/            Editor, Run/Tests/Stress panels, sidebar, badges
+|  |  |- lib/                   Typed API client, localStorage helpers, templates
+|  |- data/problems/           Saved problems (one JSON file per problem)
+|- include/bits/stdc++.h        Portable <bits/stdc++.h> shim for clang/libc++
+|- Makefile                     Portable terminal build/run/test
+|- docs/                        This documentation
 ```
 
-</details>
+The execution engine compiles each submission to a unique `os.tmpdir()` directory
+with `-std=gnu++17 -O2 -I include`, measures wall-clock time inside Node with
+`process.hrtime.bigint()`, enforces the time limit with `SIGKILL` (reported as TLE),
+caps stdin / stdout / stderr at 4 MiB, and distinguishes compile errors (CE) from
+runtime errors (RE) and spawn failures. Output comparison tolerates trailing
+whitespace and trailing blank lines.
+
+A deeper walkthrough lives in [`docs/architecture.md`](docs/architecture.md).
+
+---
+
+## Documentation
+
+| Document                                             | Contents                                                  |
+| ---------------------------------------------------- | --------------------------------------------------------- |
+| [`docs/features.md`](docs/features.md)               | Full feature guide for every panel and setting.           |
+| [`docs/architecture.md`](docs/architecture.md)       | The execution engine, the macOS shim, and the data store. |
+| [`docs/api.md`](docs/api.md)                         | Request / response contract for every `/api/*` route.     |
+| [`docs/development.md`](docs/development.md)         | Install, run, build, and the Playwright e2e suite.        |
+| [`docs/troubleshooting.md`](docs/troubleshooting.md) | Compiler-not-found, time limits, and macOS notes.         |
+
+---
+
+## Command-line tools
+
+Alongside the workbench, the repository ships a Bash CLI (`scripts/cf`) and the
+`Makefile` for terminal-first workflows:
+
+| Command              | Description                                                                                        |
+| -------------------- | -------------------------------------------------------------------------------------------------- |
+| `cf template <name>` | Scaffold `src/<name>/` with a solution and sample files.                                           |
+| `cf <name> [input]`  | Compile and run a solution with file or inline input.                                              |
+| `cf test`            | Run a solution against its sample cases with timeout protection.                                   |
+| `cf serve [problem]` | Start the web workbench.                                                                           |
+| `cf update`          | Pull the latest toolkit and re-run setup (see [`docs/UPDATE_COMMAND.md`](docs/UPDATE_COMMAND.md)). |
 
 ---
 
 ## Contributing
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-<div align="center">
-  Built with for the Competitive Programming Community.
-</div>
+Released under the MIT License. See [LICENSE](LICENSE).

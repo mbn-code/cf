@@ -63,3 +63,12 @@ node_modules/
 .venv/
 venv/
 env/
+
+# Swarm coordination dir (runtime state, never source)
+.swarm/
+
+# Workbench runtime data + test artifacts
+web/data/
+web/test-results/
+web/playwright-report/
+web/.next/

@@ -118,8 +118,23 @@
   outline: none !important;
 }
 
+/* Keep one source line per visual row so the line-number gutter stays aligned:
+   disable wrapping and let long lines scroll horizontally instead. */
+.cf-code-editor textarea,
+.cf-code-editor pre {
+  white-space: pre !important;
+  overflow-wrap: normal !important;
+  word-break: keep-all !important;
+  tab-size: 4;
+}
+.cf-code-textarea {
+  caret-color: #e4e4e7;
+}
+
 /* --- Tailwind Typography / Markdown tweaks --- */
-.prose h1, .prose h2, .prose h3 {
+.prose h1,
+.prose h2,
+.prose h3 {
   @apply text-zinc-100 font-bold mb-4 mt-6 first:mt-0;
 }
 .prose p {
@@ -131,7 +146,8 @@
 .prose pre {
   @apply bg-zinc-900 border border-zinc-800 rounded-lg p-4 my-4 overflow-x-auto;
 }
-.prose ul, .prose ol {
+.prose ul,
+.prose ol {
   @apply ml-6 mb-4 space-y-2;
 }
 .prose li {

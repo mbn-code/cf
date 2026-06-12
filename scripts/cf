@@ -375,8 +375,8 @@ extract_example_block() {
             function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
             function norm_head(s){ s=tolower(s); gsub(/[[:space:]]+/, " ", s); s=trim(s); return s }
             function is_head(s, name){ s=norm_head(s); name=tolower(name); return (s==name || s==name":" || s==name" :") }
-            function is_input_head(s){ return is_head(s, "input") || is_head(s, "sample input") }
-            function is_output_head(s){ return is_head(s, "output") || is_head(s, "sample output") }
+            function is_input_head(s){ return is_head(s, "input") || is_head(s, "sample input") || is_head(s, "inputcopy") }
+            function is_output_head(s){ return is_head(s, "output") || is_head(s, "sample output") || is_head(s, "outputcopy") }
             function is_stop_head(s){ return is_head(s, "note") || is_head(s, "explanation") || is_head(s, "constraints") || is_head(s, "examples") }
             BEGIN { in_examples=0; in_block=0; printed=0; example_idx=0 }
             {
@@ -482,7 +482,7 @@ count_samples() {
             if (!in_examples && tolower(line) ~ /^example[[:space:]]*[0-9]*$/) { in_examples=1; next }
             if (!in_examples) next
 
-            if (is_head(line, "input") || is_head(line, "sample input")) { count++ }
+            if (is_head(line, "input") || is_head(line, "sample input") || is_head(line, "inputcopy")) { count++ }
         }
         END { print count }
     ' "$file"
@@ -598,6 +598,7 @@ EOF
 
 cmd_run() {
     local input_arg=""
+    local inline_arg=""
     local sample_index="1"
     local use_stdin=0
     local sample_set=0
@@ -631,10 +632,13 @@ cmd_run() {
                     input_arg="$1"
                 elif [[ "$1" =~ ^[0-9]+$ ]] && [ "$sample_set" -eq 0 ] && [ -f "$input_arg" ]; then
                     sample_index="$1"
+                elif [ -z "$inline_arg" ]; then
+                    # `cf <problem> "<input>"` — second positional is inline stdin
+                    inline_arg="$1"
                 else
                     print_warning "Ignoring extra argument: $1"
                 fi
-                ;; 
+                ;;
         esac
         shift || true
     done
@@ -643,12 +647,17 @@ cmd_run() {
         error_exit "Invalid sample index: $sample_index" "$EXIT_USAGE"
     fi
 
-    # Handle directory as input_arg
+    # Handle directory as input_arg — and remember the problem dir so the
+    # compile step happens THERE, not in whatever cwd cf was launched from
+    # (this is what makes `cf <problem>` work from the repo root).
+    local prob_dir=""
     if [ -n "$input_arg" ] && [ ! -f "$input_arg" ]; then
         if [ -d "$input_arg" ] && [ -f "$input_arg/problem.txt" ]; then
-            input_arg="$input_arg/problem.txt"
+            prob_dir="$(cd "$input_arg" && pwd)"
+            input_arg="$prob_dir/problem.txt"
         elif [ -d "$SRC_DIR/$input_arg" ] && [ -f "$SRC_DIR/$input_arg/problem.txt" ]; then
-            input_arg="$SRC_DIR/$input_arg/problem.txt"
+            prob_dir="$SRC_DIR/$input_arg"
+            input_arg="$prob_dir/problem.txt"
         elif [ "$(basename "$PWD")" = "$input_arg" ] && [ -f "$PWD/problem.txt" ]; then
             input_arg="$PWD/problem.txt"
         fi
@@ -658,13 +667,14 @@ cmd_run() {
         input_arg="$PWD/problem.txt"
     fi
 
-    # Find .cpp files in current directory
+    # Find .cpp files in the problem dir (when named) or current directory.
+    local src_ctx="${prob_dir:-$PWD}"
     cpp_files=()
     while IFS= read -r file; do
         [ -n "$file" ] && cpp_files+=("$file")
-    done < <(find "$PWD" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
+    done < <(find "$src_ctx" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
     if [ ${#cpp_files[@]} -eq 0 ]; then
-        error_exit "No C++ file found in current directory ($PWD)" "$EXIT_USAGE"
+        error_exit "No C++ file found in $src_ctx" "$EXIT_USAGE"
     fi
 
     print_info "Using: ${#cpp_files[@]} source file(s)"
@@ -703,6 +713,13 @@ cmd_run() {
 
     if [ "$use_stdin" -eq 1 ]; then
         print_info "Running with stdin (forced)"
+    elif [ -n "$inline_arg" ]; then
+        # `cf <problem> "<input>"` — literal stdin beats sample extraction.
+        print_info "Running with inline input"
+        input_data=$(printf "%b" "$inline_arg") || true
+        temp_input=$(mktemp) || error_exit "Failed to create temp input file" "$EXIT_IO"
+        printf '%s' "$input_data" > "$temp_input"
+        add_cleanup "$temp_input"
     elif [ -n "$input_arg" ]; then
         if [ -f "$input_arg" ]; then
             # Input is a file - extract test input intelligently
@@ -729,9 +746,9 @@ cmd_run() {
                 temp_input=""
             fi
 
-            if [ -z "$temp_input" ] && [ -d "$PWD/samples" ]; then
-                local sample_in="$PWD/samples/${sample_index}.in"
-                local sample_out="$PWD/samples/${sample_index}.out"
+            if [ -z "$temp_input" ] && [ -d "$src_ctx/samples" ]; then
+                local sample_in="$src_ctx/samples/${sample_index}.in"
+                local sample_out="$src_ctx/samples/${sample_index}.out"
                 if [ -f "$sample_in" ]; then
                     temp_input=$(mktemp) || error_exit "Failed to create temp input file" "$EXIT_IO"
                     cat "$sample_in" > "$temp_input"

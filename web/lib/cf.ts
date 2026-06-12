@@ -1,16 +1,16 @@
-import { spawn } from 'child_process';
-import path from 'path';
-import fs from 'fs/promises';
+import { spawn } from "child_process";
+import path from "path";
+import fs from "fs/promises";
 
-const REPO_ROOT = path.resolve(process.cwd(), '..');
-const CF_SCRIPT = path.join(REPO_ROOT, 'scripts', 'cf');
+const REPO_ROOT = path.resolve(process.cwd(), "..");
+const CF_SCRIPT = path.join(REPO_ROOT, "scripts", "cf");
 
 export function getProblemsDir() {
-  return process.env.CF_PROBLEMS_DIR || path.join(REPO_ROOT, 'src');
+  return process.env.CF_PROBLEMS_DIR || path.join(REPO_ROOT, "src");
 }
 
 export type ParsedResult = {
-  verdict: 'Accepted' | 'Wrong Answer' | 'Runtime Error' | 'Internal Error';
+  verdict: "Accepted" | "Wrong Answer" | "Runtime Error" | "Internal Error";
   passedCount: number;
   totalCount: number;
   runtime?: number;
@@ -25,9 +25,13 @@ export type ParsedResult = {
   }>;
 };
 
-export function parseCfOutput(stdout: string, stderr: string, exitCode: number): ParsedResult {
+export function parseCfOutput(
+  stdout: string,
+  stderr: string,
+  exitCode: number,
+): ParsedResult {
   const result: ParsedResult = {
-    verdict: exitCode === 0 ? 'Accepted' : 'Wrong Answer',
+    verdict: exitCode === 0 ? "Accepted" : "Wrong Answer",
     passedCount: 0,
     totalCount: 0,
     samples: [],
@@ -35,10 +39,15 @@ export function parseCfOutput(stdout: string, stderr: string, exitCode: number):
   };
 
   // Strip ANSI escape codes and combine
-  const combined = (stdout + "\n" + stderr).replace(/\x1B\[[0-9;]*[JKmsu]/g, '');
+  const combined = (stdout + "\n" + stderr).replace(
+    /\x1B\[[0-9;]*[JKmsu]/g,
+    "",
+  );
 
   // Parse resource usage (taking max over all runs)
-  const usageMatches = Array.from(combined.matchAll(/RESOURCE_USAGE:\s*([\d.]+)\s*(\d+)/g));
+  const usageMatches = Array.from(
+    combined.matchAll(/RESOURCE_USAGE:\s*([\d.]+)\s*(\d+)/g),
+  );
   let maxRuntime = 0;
   let maxMemory = 0;
   let hasUsage = false;
@@ -53,12 +62,14 @@ export function parseCfOutput(stdout: string, stderr: string, exitCode: number):
   }
 
   // Parse total counts: Total: 3 | Passed: 3 | Failed: 0
-  const summaryMatch = combined.match(/Total:\s*(\d+)\s*\|\s*Passed:\s*(\d+)\s*\|\s*Failed:\s*(\d+)/);
+  const summaryMatch = combined.match(
+    /Total:\s*(\d+)\s*\|\s*Passed:\s*(\d+)\s*\|\s*Failed:\s*(\d+)/,
+  );
   if (summaryMatch) {
     result.totalCount = parseInt(summaryMatch[1]);
     result.passedCount = parseInt(summaryMatch[2]);
     if (result.passedCount < result.totalCount) {
-      result.verdict = 'Wrong Answer';
+      result.verdict = "Wrong Answer";
     }
   }
 
@@ -68,7 +79,7 @@ export function parseCfOutput(stdout: string, stderr: string, exitCode: number):
   while ((match = sampleRegex.exec(combined)) !== null) {
     result.samples.push({
       id: parseInt(match[1]),
-      passed: match[2] === 'PASSED',
+      passed: match[2] === "PASSED",
     });
   }
 
@@ -79,23 +90,31 @@ export function parseCfOutput(stdout: string, stderr: string, exitCode: number):
     if (singlePassed || singleFailed) {
       result.totalCount = 1;
       result.passedCount = singlePassed ? 1 : 0;
-      result.verdict = singlePassed ? 'Accepted' : 'Wrong Answer';
+      result.verdict = singlePassed ? "Accepted" : "Wrong Answer";
       result.samples.push({ id: 1, passed: singlePassed });
     }
   }
 
   if (stderr && exitCode !== 0 && !summaryMatch) {
-    result.verdict = 'Runtime Error';
+    result.verdict = "Runtime Error";
   }
 
   return result;
 }
 
-export async function runCfCommand(args: string[], options: { cwd?: string; input?: string } = {}): Promise<{ stdout: string; stderr: string; exitCode: number; parsed?: ParsedResult }> {
+export async function runCfCommand(
+  args: string[],
+  options: { cwd?: string; input?: string } = {},
+): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  parsed?: ParsedResult;
+}> {
   return new Promise((resolve) => {
     const child = spawn(CF_SCRIPT, args, {
       cwd: options.cwd || REPO_ROOT,
-      env: { ...process.env, CF_REPO_ROOT: REPO_ROOT, CF_NONINTERACTIVE: '1' },
+      env: { ...process.env, CF_REPO_ROOT: REPO_ROOT, CF_NONINTERACTIVE: "1" },
     });
 
     if (options.input) {
@@ -103,18 +122,18 @@ export async function runCfCommand(args: string[], options: { cwd?: string; inpu
       child.stdin.end();
     }
 
-    let stdout = '';
-    let stderr = '';
+    let stdout = "";
+    let stderr = "";
 
-    child.stdout.on('data', (data) => {
+    child.stdout.on("data", (data) => {
       stdout += data.toString();
     });
 
-    child.stderr.on('data', (data) => {
+    child.stderr.on("data", (data) => {
       stderr += data.toString();
     });
 
-    child.on('close', (code) => {
+    child.on("close", (code) => {
       const exitCode = code ?? 0;
       const parsed = parseCfOutput(stdout, stderr, exitCode);
       resolve({ stdout, stderr, exitCode, parsed });
@@ -127,10 +146,16 @@ export async function listProblems() {
   try {
     const entries = await fs.readdir(problemsDir, { withFileTypes: true });
     return entries
-      .filter(e => e.isDirectory())
-      .map(e => e.name)
-      .filter(name => !name.startsWith('.') && name !== 'include' && name !== 'build' && name !== 'web');
-  } catch (e) {
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .filter(
+        (name) =>
+          !name.startsWith(".") &&
+          name !== "include" &&
+          name !== "build" &&
+          name !== "web",
+      );
+  } catch {
     return [];
   }
 }
@@ -140,44 +165,44 @@ export async function saveSolution(problem: string, code: string) {
   if (!(await fs.stat(problemDir).catch(() => null))) {
     await fs.mkdir(problemDir, { recursive: true });
   }
-  const solutionFile = path.join(problemDir, 'solution.cpp');
-  
+  const solutionFile = path.join(problemDir, "solution.cpp");
+
   // Only write if content changed to prevent unnecessary overrides and preserve timestamps
-  const current = await fs.readFile(solutionFile, 'utf-8').catch(() => null);
+  const current = await fs.readFile(solutionFile, "utf-8").catch(() => null);
   if (current === code) return;
-  
+
   await fs.writeFile(solutionFile, code);
 }
 
 export async function getSolution(problem: string) {
-  const solutionFile = path.join(getProblemsDir(), problem, 'solution.cpp');
+  const solutionFile = path.join(getProblemsDir(), problem, "solution.cpp");
   try {
-    return await fs.readFile(solutionFile, 'utf-8');
-  } catch (e) {
-    return '';
+    return await fs.readFile(solutionFile, "utf-8");
+  } catch {
+    return "";
   }
 }
 
 export async function saveProblemText(problem: string, text: string) {
-    const problemsDir = getProblemsDir();
-    const problemDir = path.join(problemsDir, problem);
-    if (!(await fs.stat(problemDir).catch(() => null))) {
-        await fs.mkdir(problemDir, { recursive: true });
-    }
-    const problemFile = path.join(problemDir, 'problem.txt');
+  const problemsDir = getProblemsDir();
+  const problemDir = path.join(problemsDir, problem);
+  if (!(await fs.stat(problemDir).catch(() => null))) {
+    await fs.mkdir(problemDir, { recursive: true });
+  }
+  const problemFile = path.join(problemDir, "problem.txt");
 
-    // Only write if content changed
-    const current = await fs.readFile(problemFile, 'utf-8').catch(() => null);
-    if (current === text) return;
+  // Only write if content changed
+  const current = await fs.readFile(problemFile, "utf-8").catch(() => null);
+  if (current === text) return;
 
-    await fs.writeFile(problemFile, text);
+  await fs.writeFile(problemFile, text);
 }
 
 export async function getProblemText(problem: string) {
-    const problemFile = path.join(getProblemsDir(), problem, 'problem.txt');
-    try {
-        return await fs.readFile(problemFile, 'utf-8');
-    } catch (e) {
-        return '';
-    }
+  const problemFile = path.join(getProblemsDir(), problem, "problem.txt");
+  try {
+    return await fs.readFile(problemFile, "utf-8");
+  } catch {
+    return "";
+  }
 }

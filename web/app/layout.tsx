@@ -14,8 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CF Toolkit Web",
-  description: "Web interface for Codeforces CLI Toolkit",
+  title: "cf · workbench",
+  description:
+    "Local Codeforces workbench: write, run, test and stress-test C++ solutions.",
 };
 
 export default function RootLayout({
