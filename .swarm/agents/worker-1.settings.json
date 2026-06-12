@@ -1,0 +1,45 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node /Users/mbn/Documents/github/cf/.swarm/bin/hook-status.mjs worker-1 SessionStart /Users/mbn/Documents/github/cf/.swarm/status/worker-1.json"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node /Users/mbn/Documents/github/cf/.swarm/bin/hook-status.mjs worker-1 PostToolUse /Users/mbn/Documents/github/cf/.swarm/status/worker-1.json"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node /Users/mbn/Documents/github/cf/.swarm/bin/hook-status.mjs worker-1 Stop /Users/mbn/Documents/github/cf/.swarm/status/worker-1.json"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/node /Users/mbn/Documents/github/cf/.swarm/bin/hook-status.mjs worker-1 SessionEnd /Users/mbn/Documents/github/cf/.swarm/status/worker-1.json"
+          }
+        ]
+      }
+    ]
+  }
+}
