@@ -59,13 +59,15 @@ check() {
 }
 
 expect_status() {
-    local name="$1" want="$2"
-    [ "$STATUS" -eq "$want" ]; check "$name (exit $want)" $?
+    local name="$1" want="$2" ok=1
+    [ "$STATUS" -eq "$want" ] && ok=0
+    check "$name (exit $want)" "$ok"
 }
 
 expect_contains() {
-    local name="$1" needle="$2"
-    printf '%s' "$OUT" | grep -qF -- "$needle"; check "$name contains '$needle'" $?
+    local name="$1" needle="$2" ok=1
+    printf '%s' "$OUT" | grep -qF -- "$needle" && ok=0
+    check "$name contains '$needle'" "$ok"
 }
 
 expect_not_contains() {

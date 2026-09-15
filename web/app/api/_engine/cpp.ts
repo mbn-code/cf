@@ -514,7 +514,12 @@ export function runBinary(
     });
 
     child.stdout.on("data", (d: Buffer) => {
-      if (outLen >= maxOut) return;
+      if (outLen >= maxOut) {
+        // A chunk filled the cap exactly; anything after it is overflow.
+        truncated = true;
+        child.kill("SIGKILL");
+        return;
+      }
       const room = maxOut - outLen;
       if (d.length > room) {
         outChunks.push(d.subarray(0, room));
@@ -528,7 +533,10 @@ export function runBinary(
     });
 
     child.stderr.on("data", (d: Buffer) => {
-      if (errLen >= maxOut) return;
+      if (errLen >= maxOut) {
+        truncated = true;
+        return;
+      }
       const room = maxOut - errLen;
       if (d.length > room) {
         errChunks.push(d.subarray(0, room));

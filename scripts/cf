@@ -270,7 +270,7 @@ add_cleanup() {
 }
 run_cleanup() {
     local item
-    for item in "${CLEANUP_ITEMS[@]}"; do
+    for item in ${CLEANUP_ITEMS[@]+"${CLEANUP_ITEMS[@]}"}; do
         rm -f "$item" 2>/dev/null || true
     done
 }
@@ -984,7 +984,7 @@ cmd_test_all() {
     collect_cpp_files "$prob_dir"
     local sources=()
     local f
-    for f in "${cpp_files[@]}"; do
+    for f in ${cpp_files[@]+"${cpp_files[@]}"}; do
         case "$(basename "$f")" in
             brute.cpp|gen.cpp|generator.cpp) ;;
             *) sources+=("$f") ;;
@@ -1249,7 +1249,7 @@ cmd_stress() {
     collect_cpp_files "$prob_dir"
     local sources=()
     local f
-    for f in "${cpp_files[@]}"; do
+    for f in ${cpp_files[@]+"${cpp_files[@]}"}; do
         case "$(basename "$f")" in
             brute.cpp|gen.cpp|generator.cpp) ;;
             *) sources+=("$f") ;;
