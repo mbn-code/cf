@@ -1,14 +1,18 @@
 {
-  "name": "web",
-  "version": "0.1.0",
+  "name": "cf-workbench",
+  "version": "1.0.0",
   "private": true,
-  "//": "Build/lint tooling (typescript, eslint, eslint-config-next, tailwind, shadcn, @types/*) is kept in dependencies rather than devDependencies on purpose: the validation/CI install runs with NODE_ENV=production, which makes `npm install` omit devDependencies. Keeping these as runtime dependencies guarantees `npm run lint` and `npm run build` succeed regardless of NODE_ENV. Only @playwright/test (e2e harness) stays a devDependency.",
+  "//": "Build/lint tooling (typescript, eslint, eslint-config-next, tailwind, shadcn, @types/*) is kept in dependencies rather than devDependencies on purpose: the validation/CI install runs with NODE_ENV=production, which makes `npm install` omit devDependencies. Keeping these as runtime dependencies guarantees `npm run lint` and `npm run build` succeed regardless of NODE_ENV. Only the test harnesses (@playwright/test, vitest) stay devDependencies.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "e2e": "playwright test"
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4",
@@ -35,6 +39,7 @@
     "typescript": "5.9.3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.0"
+    "@playwright/test": "^1.49.0",
+    "vitest": "^3.2.7"
   }
 }

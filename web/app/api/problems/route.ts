@@ -1,18 +1,23 @@
 /**
- * /api/problems — persist saved problems and their test cases as JSON under
+ * /api/problems — persist saved problems as JSON under
  * <web>/data/problems/<slug>.json. Uses only Node built-ins.
  *
- * GET  /api/problems              → { problems: ProblemSummary[] }   (newest first)
- * GET  /api/problems?name=<n|slug>→ { problem: Problem } | 404 { error }
+ * GET  /api/problems                 → { problems: ProblemSummary[] }   (newest first)
+ * GET  /api/problems?name=<n|slug>   → { problem: Problem } | 404 { error }
+ * GET  /api/problems?export=1        → { version: 1, exportedAt, problems: Problem[] }
  * POST /api/problems
- *        { name, code?, statement?, tests? }   → { ok, problem }     (upsert)
- *        { op: "rename", from, to }            → { ok, problem }      (rename)
- * DELETE /api/problems?name=<n|slug>           → { ok, deleted }
+ *        { name, code?, statement?, tests?, stdin?, brute?, generator?, settings? }
+ *                                     → { ok, problem }      (upsert)
+ *        { op: "rename", from, to }   → { ok, problem }      (rename)
+ *        { op: "duplicate", from, to }→ { ok, problem }      (copy)
+ *        { op: "import", problems: Problem[], overwrite?: boolean }
+ *                                     → { ok, imported, skipped }
+ * DELETE /api/problems?name=<n|slug>  → { ok, deleted }
  *
  * Types:
  *   TestCase       = { input: string, expected: string }
- *   Problem        = { name, slug, code, statement, tests: TestCase[],
- *                      createdAt, updatedAt }
+ *   Problem        = { name, slug, code, statement, tests: TestCase[], stdin,
+ *                      brute, generator, settings|null, createdAt, updatedAt }
  *   ProblemSummary = { name, slug, testCount, updatedAt }
  *
  * `slug` is derived from `name` (lowercase, non-alphanumerics → "-") and is the
@@ -22,19 +27,32 @@
 import { NextResponse } from "next/server";
 import {
   listProblems,
+  listProblemsFull,
   getProblem,
   saveProblem,
   deleteProblem,
   renameProblem,
+  duplicateProblem,
+  importProblems,
   slugify,
 } from "../_engine/store";
+import { readJson, badRequest, str } from "../_engine/request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const MAX_NAME = 120;
+
 function resolveSlug(key: string): string {
   // Accept either an exact slug or a human name; slugify is idempotent on slugs.
   return /^[a-z0-9-]+$/.test(key) ? key : slugify(key);
+}
+
+function notFound(name: string) {
+  return NextResponse.json(
+    { error: `Problem not found: ${name}` },
+    { status: 404 },
+  );
 }
 
 export async function GET(request: Request) {
@@ -44,58 +62,60 @@ export async function GET(request: Request) {
     const problem =
       (await getProblem(resolveSlug(name))) ??
       (await getProblem(slugify(name)));
-    if (!problem) {
-      return NextResponse.json(
-        { error: `Problem not found: ${name}` },
-        { status: 404 },
-      );
-    }
+    if (!problem) return notFound(name);
     return NextResponse.json({ problem });
+  }
+  if (searchParams.get("export")) {
+    const problems = await listProblemsFull();
+    return NextResponse.json({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      problems,
+    });
   }
   const problems = await listProblems();
   return NextResponse.json({ problems });
 }
 
 export async function POST(request: Request) {
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const { body, error } = await readJson(request);
+  if (error) return error;
 
-  if (body.op === "rename") {
-    const from = typeof body.from === "string" ? body.from : "";
-    const to = typeof body.to === "string" ? body.to : "";
-    if (!from || !to.trim()) {
-      return NextResponse.json(
-        { error: "rename requires `from` and `to`" },
-        { status: 400 },
-      );
-    }
-    const problem = await renameProblem(resolveSlug(from), to.trim());
-    if (!problem) {
-      return NextResponse.json(
-        { error: `Problem not found: ${from}` },
-        { status: 404 },
-      );
-    }
+  const op = str(body, "op");
+
+  if (op === "rename" || op === "duplicate") {
+    const from = str(body, "from");
+    const to = str(body, "to").trim();
+    if (!from || !to) return badRequest(`${op} requires \`from\` and \`to\``);
+    if (to.length > MAX_NAME) return badRequest("Problem name is too long");
+    const problem =
+      op === "rename"
+        ? await renameProblem(resolveSlug(from), to)
+        : await duplicateProblem(resolveSlug(from), to);
+    if (!problem) return notFound(from);
     return NextResponse.json({ ok: true, problem });
   }
 
-  const name = typeof body.name === "string" ? body.name : "";
-  if (!name.trim()) {
-    return NextResponse.json(
-      { error: "Missing required field: name" },
-      { status: 400 },
-    );
+  if (op === "import") {
+    const result = await importProblems(body.problems, body.overwrite === true);
+    return NextResponse.json({ ok: true, ...result });
   }
 
+  if (op) return badRequest(`Unknown op: ${op}`);
+
+  const name = str(body, "name").trim();
+  if (!name) return badRequest("Missing required field: name");
+  if (name.length > MAX_NAME) return badRequest("Problem name is too long");
+
   const problem = await saveProblem({
-    name: name.trim(),
+    name,
     code: typeof body.code === "string" ? body.code : undefined,
     statement: typeof body.statement === "string" ? body.statement : undefined,
     tests: body.tests,
+    stdin: typeof body.stdin === "string" ? body.stdin : undefined,
+    brute: typeof body.brute === "string" ? body.brute : undefined,
+    generator: typeof body.generator === "string" ? body.generator : undefined,
+    settings: body.settings,
   });
   return NextResponse.json({ ok: true, problem });
 }
@@ -103,12 +123,7 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const name = searchParams.get("name");
-  if (!name) {
-    return NextResponse.json(
-      { error: "Missing required query param: name" },
-      { status: 400 },
-    );
-  }
+  if (!name) return badRequest("Missing required query param: name");
   const deleted =
     (await deleteProblem(resolveSlug(name))) ||
     (await deleteProblem(slugify(name)));

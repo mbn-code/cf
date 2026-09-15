@@ -3,7 +3,7 @@
  *
  * Compiles three C++ sources, then repeatedly: runs `generator <seed>` to make
  * an input, feeds that input to both `solution` and `brute`, and compares their
- * outputs (trailing-whitespace tolerant). Returns the first input on which they
+ * outputs under the chosen checker. Returns the first input on which they
  * disagree (or on which a program crashes / times out).
  *
  * The generator receives the iteration seed as argv[1] so runs are reproducible.
@@ -16,7 +16,10 @@
  *     iterations?: number,     // rounds to run, default 100, max 5000
  *     timeLimitMs?: number,    // per-program limit, default 5000
  *     seedBase?: number,       // first seed, default 1
- *     std?: string             // C++ standard, default gnu++17
+ *     std?: string,            // C++ standard, default gnu++17
+ *     compilerFlags?: string[],
+ *     checker?: "lines"|"tokens"|"float",
+ *     epsilon?: number
  *   }
  *
  * Response JSON (200):
@@ -24,10 +27,13 @@
  *     ok: boolean,                 // compiled & ran (not whether a bug was found)
  *     failed: boolean,             // true when a counter-example was found
  *     iterationsRun: number,
+ *     elapsedMs: number,           // wall-clock time spent iterating
+ *     deadlineHit: boolean,        // true when the request budget cut the search short
+ *     stats: { maxSolutionMs, maxBruteMs, avgSolutionMs },
  *     compile: {                   // per-source compile status
- *       solution: { ok, stderr, ms },
- *       brute:    { ok, stderr, ms },
- *       generator:{ ok, stderr, ms }
+ *       solution: { ok, stderr, ms, cached, diagnostics },
+ *       brute:    { ok, stderr, ms, cached, diagnostics },
+ *       generator:{ ok, stderr, ms, cached, diagnostics }
  *     },
  *     firstFailure?: {
  *       iteration: number,
@@ -49,47 +55,41 @@ import {
   compile,
   runBinary,
   cleanup,
+  runVerdict,
   type CompileResult,
 } from "../_engine/cpp";
 import { compareOutputs } from "../_engine/compare";
+import { readJson, badRequest, parseRunOptions, str } from "../_engine/request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_ITERATIONS = 5000;
 // Overall wall-clock budget so a slow brute force can't hang a request forever.
-const TOTAL_DEADLINE_MS = 30_000;
+const TOTAL_DEADLINE_MS = 60_000;
 
 export async function POST(request: Request) {
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const { body, error } = await readJson(request);
+  if (error) return error;
 
-  const solution = typeof body.solution === "string" ? body.solution : "";
-  const brute = typeof body.brute === "string" ? body.brute : "";
-  const generator = typeof body.generator === "string" ? body.generator : "";
+  const solution = str(body, "solution");
+  const brute = str(body, "brute");
+  const generator = str(body, "generator");
   if (!solution.trim() || !brute.trim() || !generator.trim()) {
-    return NextResponse.json(
-      {
-        error: "Provide non-empty `solution`, `brute` and `generator` sources",
-      },
-      { status: 400 },
+    return badRequest(
+      "Provide non-empty `solution`, `brute` and `generator` sources",
     );
   }
 
   const iterations = clampInt(body.iterations, 100, 1, MAX_ITERATIONS);
-  const timeLimitMs =
-    typeof body.timeLimitMs === "number" ? body.timeLimitMs : undefined;
   const seedBase = clampInt(body.seedBase, 1, 0, Number.MAX_SAFE_INTEGER);
-  const std = typeof body.std === "string" ? body.std : undefined;
+  const opts = parseRunOptions(body);
+  const compileOpts = { std: opts.std, extraFlags: opts.extraFlags };
 
   const [cs, cb, cg] = await Promise.all([
-    compile(solution, { std, label: "sol" }),
-    compile(brute, { std, label: "brute" }),
-    compile(generator, { std, label: "gen" }),
+    compile(solution, { ...compileOpts, label: "sol" }),
+    compile(brute, { ...compileOpts, label: "brute" }),
+    compile(generator, { ...compileOpts, label: "gen" }),
   ]);
 
   const compileBlock = {
@@ -109,115 +109,137 @@ export async function POST(request: Request) {
       ok: false,
       failed: false,
       iterationsRun: 0,
+      elapsedMs: 0,
+      deadlineHit: false,
+      stats: { maxSolutionMs: 0, maxBruteMs: 0, avgSolutionMs: 0 },
       compile: compileBlock,
       message: `Compilation failed for ${which}.`,
     });
   }
 
   const start = process.hrtime.bigint();
+  const elapsed = () => Number(process.hrtime.bigint() - start) / 1e6;
   let iterationsRun = 0;
+  let deadlineHit = false;
+  let maxSolutionMs = 0;
+  let maxBruteMs = 0;
+  let sumSolutionMs = 0;
   let firstFailure: Record<string, unknown> | undefined;
 
-  try {
-    for (let i = 0; i < iterations; i++) {
-      if (Number(process.hrtime.bigint() - start) / 1e6 > TOTAL_DEADLINE_MS)
-        break;
-      iterationsRun = i + 1;
-      const seed = seedBase + i;
+  for (let i = 0; i < iterations; i++) {
+    if (elapsed() > TOTAL_DEADLINE_MS) {
+      deadlineHit = true;
+      break;
+    }
+    iterationsRun = i + 1;
+    const seed = seedBase + i;
 
-      const gen = await runBinary(cg.binPath, {
-        args: [String(seed)],
-        timeLimitMs,
-      });
-      if (gen.timedOut || gen.spawnError || gen.exitCode !== 0 || gen.signal) {
-        firstFailure = {
-          iteration: i + 1,
-          seed,
-          reason: "generator-error",
-          input: gen.stdout,
-          solutionOutput: "",
-          bruteOutput: "",
-          diff: [],
-          generatorStderr: gen.stderr,
-        };
-        break;
-      }
-      const input = gen.stdout;
+    const gen = await runBinary(cg.binPath, {
+      args: [String(seed)],
+      timeLimitMs: opts.timeLimitMs,
+    });
+    if (runVerdict(gen) !== "OK") {
+      firstFailure = {
+        iteration: i + 1,
+        seed,
+        reason: "generator-error",
+        input: gen.stdout,
+        solutionOutput: "",
+        bruteOutput: "",
+        diff: [],
+        generatorStderr: gen.stderr,
+      };
+      break;
+    }
+    const input = gen.stdout;
 
-      const [solRun, bruteRun] = await Promise.all([
-        runBinary(cs.binPath, { input, timeLimitMs }),
-        runBinary(cb.binPath, { input, timeLimitMs }),
-      ]);
+    const [solRun, bruteRun] = await Promise.all([
+      runBinary(cs.binPath, { input, timeLimitMs: opts.timeLimitMs }),
+      runBinary(cb.binPath, { input, timeLimitMs: opts.timeLimitMs }),
+    ]);
+    maxSolutionMs = Math.max(maxSolutionMs, solRun.timeMs);
+    maxBruteMs = Math.max(maxBruteMs, bruteRun.timeMs);
+    sumSolutionMs += solRun.timeMs;
 
-      const solBad =
-        solRun.timedOut ||
-        solRun.spawnError ||
-        solRun.exitCode !== 0 ||
-        solRun.signal;
-      const bruteBad =
-        bruteRun.timedOut ||
-        bruteRun.spawnError ||
-        bruteRun.exitCode !== 0 ||
-        bruteRun.signal;
-
-      if (solBad || bruteBad) {
-        const reason = solRun.timedOut
+    const solV = runVerdict(solRun);
+    const bruteV = runVerdict(bruteRun);
+    if (solV !== "OK" || bruteV !== "OK") {
+      const reason =
+        solV === "TLE"
           ? "solution-tle"
-          : bruteRun.timedOut
+          : bruteV === "TLE"
             ? "brute-tle"
-            : solBad
+            : solV !== "OK"
               ? "solution-error"
               : "brute-error";
-        firstFailure = {
-          iteration: i + 1,
-          seed,
-          reason,
-          input,
-          solutionOutput: solRun.stdout,
-          bruteOutput: bruteRun.stdout,
-          solutionStderr: solRun.stderr,
-          bruteStderr: bruteRun.stderr,
-          diff: [],
-        };
-        break;
-      }
-
-      const cmp = compareOutputs(bruteRun.stdout, solRun.stdout);
-      if (!cmp.match) {
-        firstFailure = {
-          iteration: i + 1,
-          seed,
-          reason: "mismatch",
-          input,
-          solutionOutput: solRun.stdout,
-          bruteOutput: bruteRun.stdout,
-          diff: cmp.diff,
-        };
-        break;
-      }
+      firstFailure = {
+        iteration: i + 1,
+        seed,
+        reason,
+        input,
+        solutionOutput: solRun.stdout,
+        bruteOutput: bruteRun.stdout,
+        solutionStderr: solRun.stderr,
+        bruteStderr: bruteRun.stderr,
+        diff: [],
+      };
+      break;
     }
-  } finally {
-    await Promise.all([
-      cleanup(cs.workDir),
-      cleanup(cb.workDir),
-      cleanup(cg.workDir),
-    ]);
+
+    const cmp = compareOutputs(bruteRun.stdout, solRun.stdout, {
+      mode: opts.checker,
+      epsilon: opts.epsilon,
+    });
+    if (!cmp.match) {
+      firstFailure = {
+        iteration: i + 1,
+        seed,
+        reason: "mismatch",
+        input,
+        solutionOutput: solRun.stdout,
+        bruteOutput: bruteRun.stdout,
+        diff: cmp.diff,
+      };
+      break;
+    }
   }
+
+  const elapsedMs = Math.round(elapsed());
+  const message = firstFailure
+    ? `Found a counter-example on iteration ${firstFailure.iteration}.`
+    : deadlineHit
+      ? `No counter-example in ${iterationsRun} iteration(s) before the ${TOTAL_DEADLINE_MS / 1000}s request budget ran out.`
+      : `No counter-example found in ${iterationsRun} iteration(s).`;
 
   return NextResponse.json({
     ok: true,
     failed: !!firstFailure,
     iterationsRun,
+    elapsedMs,
+    deadlineHit,
+    stats: {
+      maxSolutionMs: round1(maxSolutionMs),
+      maxBruteMs: round1(maxBruteMs),
+      avgSolutionMs: round1(iterationsRun ? sumSolutionMs / iterationsRun : 0),
+    },
     compile: compileBlock,
     firstFailure,
-    message: firstFailure
-      ? `Found a counter-example on iteration ${firstFailure.iteration}.`
-      : `No counter-example found in ${iterationsRun} iteration(s).`,
+    message,
   });
 }
 
 function toCompileStatus(c: CompileResult) {
-  return { ok: c.ok, stderr: c.stderr, ms: c.ms };
+  return {
+    ok: c.ok,
+    stderr: c.stderr,
+    ms: Math.round(c.ms),
+    cached: c.cached,
+    diagnostics: c.diagnostics,
+  };
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }
 
 function clampInt(v: unknown, def: number, lo: number, hi: number): number {

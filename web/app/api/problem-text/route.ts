@@ -4,28 +4,38 @@
  * GET  /api/problem-text?problem=<name> → { text: string }  ("" when absent)
  * POST /api/problem-text  { problem, text } → { success: true }
  *
- * Self-contained (Node built-ins only) so the api tree never imports web/lib.
+ * `problem` must be a single safe path segment; see /api/solution.
  */
 
 import { NextResponse } from "next/server";
-import { getProblemText, saveProblemText } from "../_engine/store";
+import {
+  getProblemText,
+  saveProblemText,
+  isSafeProblemName,
+} from "../_engine/store";
+import { readJson, badRequest, str } from "../_engine/request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const MAX_TEXT_BYTES = 1024 * 1024;
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const problem = searchParams.get("problem");
-  if (!problem)
-    return NextResponse.json({ error: "Missing problem" }, { status: 400 });
+  if (!isSafeProblemName(problem)) return badRequest("Invalid problem name");
   const text = await getProblemText(problem);
   return NextResponse.json({ text });
 }
 
 export async function POST(request: Request) {
-  const { problem, text } = await request.json();
-  if (!problem)
-    return NextResponse.json({ error: "Missing problem" }, { status: 400 });
-  await saveProblemText(problem, typeof text === "string" ? text : "");
+  const { body, error } = await readJson(request);
+  if (error) return error;
+  const problem = str(body, "problem");
+  if (!isSafeProblemName(problem)) return badRequest("Invalid problem name");
+  const text = str(body, "text");
+  if (Buffer.byteLength(text, "utf8") > MAX_TEXT_BYTES)
+    return badRequest("Statement is too large");
+  await saveProblemText(problem, text);
   return NextResponse.json({ success: true });
 }
