@@ -20,10 +20,13 @@ cf update
 
 ### Update Process
 
-1. Fetches latest changes from `origin` remote
-2. Pulls changes from `origin/main` branch
-3. Runs setup script automatically (if it exists)
-4. Returns to original directory
+1. Fetches latest changes from the tracked remote (`origin` by default)
+2. Fast-forwards the current branch (`git pull --ff-only`); a diverged
+   branch is reported instead of being merged
+3. Runs the setup script automatically (skip with `CF_UPDATE_SKIP_SETUP=1`)
+4. Returns to the original directory
+
+Run `cf version` afterwards to confirm the new version.
 
 ### Error Handling
 

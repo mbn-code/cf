@@ -1,201 +1,176 @@
 # Architecture
 
-This document describes how the workbench compiles and runs C++ on the server. The
-authoritative source is the engine under `web/app/api/_engine/`; the contracts that
-the routes expose on top of it are in [api.md](api.md).
+This document describes how the workbench executes code: the server engine
+under `web/app/api/_engine/`, the checkers, the statement parser, the
+portable `<bits/stdc++.h>` shim, the problem store, and how the CLI relates
+to all of it.
 
 ## Overview
 
 ```
-Browser (web/app/page.tsx, components/**)
-        |
-        |  fetch JSON  (web/lib/api.ts)
-        v
-Next.js API routes (web/app/api/*/route.ts)   runtime = "nodejs"
-        |
-        v
-Engine (web/app/api/_engine/)
-   cpp.ts      compiler detection, compile(), runBinary(), cleanup()
-   compare.ts  normalize(), compareOutputs()
-   store.ts    problems JSON store + legacy src helpers
-        |
-        v
-Host C++ toolchain  +  include/bits/stdc++.h  +  web/data/**
+browser (web/app/page.tsx + components)
+   |  fetch JSON                       web/lib/api.ts (typed client)
+   v
+Next.js route handlers (web/app/api/*/route.ts)
+   |  plain function calls
+   v
+engine (web/app/api/_engine/*.ts, Node built-ins only)
+   |  child_process.spawn / spawnSync
+   v
+host C++ toolchain (clang++ / c++ / g++) + include/bits/stdc++.h
 ```
 
-Two ground rules shape the engine:
+The engine deliberately depends only on Node built-ins (`node:child_process`,
+`node:fs`, `node:os`, `node:path`, `node:crypto`) so the `web/app/api` tree
+never imports from `web/lib`, and so it can be unit-tested with Vitest
+without booting Next.
 
-1. **Node built-ins only.** `cpp.ts`, `compare.ts`, and `store.ts` import nothing but
-   `node:child_process`, `node:fs`, `node:os`, and `node:path`. The API tree never
-   reaches into `web/lib`, so the server and client never share runtime code.
-2. **No shared mutable state on disk.** Every compilation happens in its own unique
-   `os.tmpdir()` directory, so concurrent requests cannot collide, and the directory
-   is always cleaned up afterwards.
-
-All API routes declare `export const runtime = "nodejs"` and
-`export const dynamic = "force-dynamic"` so they run on the Node runtime (not the
-Edge runtime) and are never statically cached.
-
----
-
-## The execution engine: `cpp.ts`
+## The engine (`_engine/cpp.ts`)
 
 ### Compiler detection
 
-`detectCompiler()` returns the first usable C++ compiler or `null`. It honours an
-explicit `CF_CXX` (or `CXX`) override, then falls back to a preference list of
-`clang++`, `c++`, `g++`. Each candidate is probed with `--version`; the first that
-exits 0 is cached for the lifetime of the process. The preference order puts the
-macOS default (`clang++` / `c++`) first while still finding `g++` on Linux.
+`detectCompiler()` honours a `CF_CXX` / `CXX` override, then probes
+`clang++`, `c++` and `g++` with `--version`. The first responder is cached
+for the process lifetime along with the first line of its version output
+(exposed by `/api/config`). No compiler means every compile returns
+`error: "no-compiler"` with an installation hint.
 
-### Compilation
+### Compilation and the cache
 
-`compile(source, opts)` writes the source to `main.cpp` in a fresh
-`mkdtemp(os.tmpdir(), "cf-<label>-")` directory and invokes the compiler with:
+`compile(source, { std, extraFlags, label })`:
 
-```
--std=<std>  -O2  -I <repoRoot>/include  main.cpp  -o prog  [extraFlags...]
-```
+1. Validates `extraFlags` with `flags.ts` and `std` with `validateStd`.
+   Rejected flags are returned as `rejectedFlags` so the UI can explain them.
+2. Refuses sources above 1 MiB.
+3. Computes a SHA-256 key over compiler, standard, accepted flags and source.
+   A cache hit returns the stored binary path immediately with `cached: true`
+   and `ms: 0`. Concurrent requests for the same key share one in-flight
+   compile.
+4. On a miss, writes `main.cpp` into a fresh `mkdtemp` directory, runs
+   `<compiler> -std=<std> -O2 -I <repo>/include main.cpp -o prog [flags]`
+   with a 30 s timeout, and rewrites the temp path in stderr back to
+   `main.cpp` so diagnostics read naturally.
+5. A successful build is renamed into the per-process cache root
+   (`os.tmpdir()/cf-cache-*`). The cache keeps 48 binaries and evicts the
+   least recently used; it is removed when the server exits. A failed build
+   keeps its `workDir` so the caller can `cleanup()` it.
 
-- `<std>` defaults to `gnu++17` (the project's canonical standard).
-- `<repoRoot>/include` is resolved from `CF_REPO_ROOT` if set, otherwise the parent
-  of the Next.js `web` directory. This is the directory that holds the
-  `<bits/stdc++.h>` shim.
-- `extraFlags` are the user's "extra compiler flags" setting, appended verbatim.
+On Windows the binary is `prog.exe`; everywhere else it is `prog`.
 
-Compilation runs through `spawnSync` with a 30-second timeout and a 4 MiB stderr
-buffer. The result distinguishes four failure causes via an `error` field:
-`no-compiler`, `compile-timeout`, `compile-error`, and `spawn-error`. Compile
-wall-clock time is measured with `process.hrtime.bigint()`. `compile()` never throws;
-callers must call `cleanup(workDir)` when done with the produced binary.
+### Running
 
-### Execution
+`runBinary(binPath, { input, args, timeLimitMs, maxOutputBytes })` spawns the
+program with piped stdio, writes stdin (capped at 4 MiB) and collects stdout
+and stderr as byte buffers up to 4 MiB each. A `setTimeout` at the clamped
+time limit sends `SIGKILL` and marks the run `timedOut`; hitting the stdout
+cap also kills the process and sets `truncated`. Wall-clock time is measured
+with `process.hrtime.bigint()` around the spawn and rounded to 0.1 ms.
 
-`runBinary(binPath, opts)` spawns the compiled program and:
+`runVerdict(run)` maps a run to `TLE` (timed out), `RE` (spawn error,
+non-zero exit or signal) or `OK`. Routes turn `OK` into `AC`/`WA` by
+comparing output.
 
-- feeds `opts.input` to stdin, truncated to **4 MiB** (`MAX_INPUT_BYTES`);
-- passes `opts.args` as argv (used to give the stress generator its seed);
-- measures wall-clock time with `process.hrtime.bigint()` around the spawn -- never
-  the shell `time` builtin, which is unreliable on macOS;
-- enforces a time limit (default 5000 ms, clamped to `[100, 60000]` ms). On timeout
-  the child is killed with `SIGKILL` and `timedOut` is set;
-- caps each of stdout and stderr at **4 MiB** (`MAX_OUTPUT_BYTES`); hitting the cap
-  sets `truncated` and (for stdout) kills the child;
-- reports the exit code, terminating signal, and any spawn error.
+### Diagnostics (`_engine/diagnostics.ts`)
 
-Like `compile()`, `runBinary()` never throws; a failure to spawn surfaces through the
-`spawnError` field. `EPIPE` on stdin is ignored, because a program may exit before
-consuming all of its input.
+`parseDiagnostics(stderr)` extracts every `path:line:col: severity: message`
+line that gcc and clang emit. Diagnostics that point at a file other than the
+user's `main.cpp` (for example inside the shim) keep their message but drop
+the line number so the editor never marks a line that is not in the source.
 
-### Tunable limits
+### Flag validation (`_engine/flags.ts`)
 
-| Constant                | Value     | Meaning                                       |
-| ----------------------- | --------- | --------------------------------------------- |
-| `DEFAULT_STD`           | `gnu++17` | Default C++ standard.                         |
-| `DEFAULT_TIME_LIMIT_MS` | 5000      | Default per-run wall-clock limit.             |
-| `MAX_TIME_LIMIT_MS`     | 60000     | Hard ceiling on a requested time limit.       |
-| `COMPILE_TIMEOUT_MS`    | 30000     | Compilation is killed past this.              |
-| `MAX_INPUT_BYTES`       | 4 MiB     | Largest stdin payload forwarded to a program. |
-| `MAX_OUTPUT_BYTES`      | 4 MiB     | Per-stream output cap before truncation.      |
+The browser sends compiler flags verbatim, so the engine allowlists the
+families a contestant needs (`-O`, `-W`, `-w`, `-D`, `-U`, `-f`, `-g`, `-m`,
+`-std=`, `-pedantic`, `-static`, `-pthread`, `-pipe`) and denies the ones
+that would turn the compiler into a file writer or code loader (`-o`, `-I`,
+`-L`, `-l`, `-include`, `@file`, `-fplugin*`, `-fprofile*`, `-Wl,`, `-Wa,`,
+`-Wp,`), anything with shell metacharacters, and unknown `-std=` values.
 
-### How verdicts are derived
+## Checkers (`_engine/compare.ts`)
 
-The routes turn an engine result into a verdict:
+`compareOutputs(expected, actual, { mode, epsilon })` first normalises both
+sides (CRLF to LF, trailing whitespace stripped per line, trailing blank
+lines removed), then:
 
-- **TLE** when `timedOut` is true.
-- **RE** when there is a spawn error, a non-zero exit code, or a terminating signal.
-- **CE** when `compile()` failed (no binary was produced).
-- **OK** / **AC** otherwise. For tests, `AC` additionally requires the output to
-  match the expected output under tolerant comparison; a non-matching run is `WA`.
+| Mode     | Accepts when                                                                                                      |
+| -------- | ----------------------------------------------------------------------------------------------------------------- |
+| `lines`  | the normalised strings are identical.                                                                             |
+| `tokens` | the whitespace-separated token sequences are identical (the Codeforces `wcmp` checker).                           |
+| `float`  | token counts match and each pair is equal, or both are numbers within `epsilon` absolutely or relative to `max(1, | expected | )`. |
 
----
+A mismatch produces a per-line diff (`{ line, expected, actual, same }`,
+`null` for a missing side, capped at 200 rows) and, in `lines` mode, a
+`presentationOnly` flag when the `tokens` checker would have accepted the
+output. The CLI implements the same `lines` and `tokens` semantics in Bash.
 
-## Output comparison: `compare.ts`
+## Statement parser (`_engine/statement.ts`)
 
-Competitive-programming judges accept output that differs only in trailing
-whitespace, trailing blank lines, and line-ending style. `normalize(s)` encodes that
-tolerance:
+`parseStatement(text)` walks a pasted statement line by line. It records the
+first non-empty line as the title, reads `time limit per test` /
+`memory limit per test` from the header, and once it sees an `Examples`
+heading (or an AtCoder-style `Sample Input N`) collects every
+`Input` / `Output` pair until a `Note`, `Explanation` or `Constraints`
+heading. Codeforces' `Copy` button text and CRLF line endings are ignored.
+Each sample is trimmed and terminated with a single newline. The CLI's awk
+parser in `scripts/cf` follows the same rules.
 
-- convert CRLF and lone CR to LF,
-- strip trailing spaces and tabs from every line,
-- drop trailing blank lines.
+## The problem store (`_engine/store.ts`)
 
-`compareOutputs(expected, actual, maxDiff = 200)` normalizes both sides, reports
-whether they match, and returns a compact per-line diff of only the differing lines
-(`{ line, expected, actual, same }`). The diff is capped at 200 lines so a
-pathological mismatch cannot produce an unbounded payload. `firstMismatch` gives the
-1-based line number of the first difference (or -1 on a match). This logic backs both
-`/api/test` and `/api/stress`.
+Problems live as `web/data/problems/<slug>.json` (or under `CF_DATA_DIR`).
+A record holds the whole workspace: `code`, `statement`, `tests`, `stdin`,
+`brute`, `generator`, an optional `settings` snapshot and timestamps.
+`normalizeProblem` coerces records written by older versions, so upgrading
+never loses a library. Writes go to a sibling temp file and are renamed into
+place, so a crash mid-write never leaves a half-written record.
 
----
+The legacy helpers that read and write `src/<problem>/solution.cpp` and
+`problem.txt` validate the problem name as a single safe path segment before
+touching the filesystem.
 
-## Persistence: `store.ts`
+## The `<bits/stdc++.h>` shim
 
-`store.ts` owns two kinds of persistence.
+Apple clang ships libc++, which has no `bits/stdc++.h`. The repository
+bundles `include/bits/stdc++.h`, an aggregate that includes the whole
+Standard Library with optional headers gated behind `__has_include`. Every
+compile (engine, CLI and Makefile) passes `-I <repo>/include`, so the idiom
+resolves on macOS, Linux and Windows alike; on GCC the shim simply shadows the
+native header with an equivalent set of includes.
 
-### The problems store (`web/data`)
+## Routes
 
-Saved problems live as one JSON file per problem under
-`<web>/data/problems/<slug>.json` (override the base with `CF_DATA_DIR`). A `Problem`
-record is:
+Each route under `web/app/api/*/route.ts` parses its body with the helpers in
+`_engine/request.ts` (`readJson`, `parseRunOptions`), calls the engine and
+serialises the result. The contracts are documented in [api.md](api.md).
+`/api/test` runs cases sequentially so timings are not skewed by CPU
+contention; `/api/stress` runs the solution and brute force for one input in
+parallel and bounds the whole request at 60 s.
 
-```ts
-{ name, slug, code, statement, tests: { input, expected }[], createdAt, updatedAt }
-```
+## The browser
 
-`slugify(name)` derives the stable file key by lowercasing, replacing runs of
-non-alphanumerics with `-`, trimming dashes, and truncating to 80 characters; an empty
-result falls back to `problem`. The store exposes `listProblems` (summaries, newest
-first), `getProblem`, `saveProblem` (upsert keyed by slug), `deleteProblem`, and
-`renameProblem`. Corrupt or unreadable files are skipped rather than failing a listing.
+`web/app/page.tsx` owns all workbench state, hydrates it from `localStorage`
+after mount, persists it back on change, and wires the panels. The panels
+are presentational components under `web/components/`; `web/lib/api.ts` is
+the only place that talks HTTP. Compiler diagnostics from the latest run feed
+the editor's gutter markers until the source changes.
 
-### Legacy file helpers (`src` tree)
+## The CLI
 
-`getSolution` / `saveSolution` and `getProblemText` / `saveProblemText` read and write
-`solution.cpp` and `problem.txt` under `src/<problem>/` (override the base with
-`CF_PROBLEMS_DIR`), keeping the `/api/solution`, `/api/problem-text`, and
-`/api/template` routes self-contained. `readTemplate(name)` reads a starter from the
-repository's `templates/<name>.cpp`, with the name sanitized to a safe basename.
+`scripts/cf` is a standalone Bash script with the same conventions: it
+compiles with `-I include`, caches binaries under `build/.cache` by a hash of
+compiler, flags and sources, parses `problem.txt` with awk, enforces time
+limits with GNU `timeout`, and reports `lines`/`tokens` verdicts. `cf serve`
+starts the Next.js app with `CF_PROBLEMS_DIR` / `CF_START_PROBLEM` exported,
+which `/api/config` reports back to the UI.
 
----
+## Environment variables
 
-## The macOS shim: `include/bits/stdc++.h`
-
-`#include <bits/stdc++.h>` is a libstdc++ (GCC) convenience header that pulls in the
-whole Standard Library. It is not part of the C++ standard, and Apple clang with
-libc++ -- the default on macOS -- does not ship it, so the idiom fails to compile
-there.
-
-The repository bundles a portable replacement at `include/bits/stdc++.h`. Because
-both the engine and the `Makefile` compile with `-I include`, the idiom resolves to
-this shim on macOS, while on GCC it simply shadows the native header with an
-equivalent set of includes. Every header that may be absent depending on the standard
-library or language mode is gated behind `__has_include`, and the file avoids
-GCC-only headers (`<ext/...>`, `<tr1/...>`), so it compiles cleanly on Apple clang /
-libc++ and on g++ / libstdc++ alike from C++17 onward.
-
-There is also an `include/stl_utilities.h` header available on the same include path
-for shared helpers.
-
----
-
-## Environment overrides
-
-| Variable           | Effect                                                    |
-| ------------------ | --------------------------------------------------------- |
-| `CF_CXX` / `CXX`   | Force a specific C++ compiler instead of auto-detection.  |
-| `CF_REPO_ROOT`     | Override the repository root used to locate `include/`.   |
-| `CF_DATA_DIR`      | Override the base directory for the problems JSON store.  |
-| `CF_PROBLEMS_DIR`  | Override the `src` directory for the legacy file helpers. |
-| `CF_START_PROBLEM` | Reported by `/api/config` as a starting problem hint.     |
-
----
-
-## Concurrency and cleanup
-
-Because each compile and run uses a unique temp directory and time is measured
-per-process inside Node, multiple requests can execute in parallel without
-interfering. The stress route exploits this: it compiles the solution, brute force,
-and generator together with `Promise.all`, and runs the solution and brute force on
-each input concurrently. Every route wraps its work in `try/finally` and calls
-`cleanup()` on each temp directory, so binaries and sources never accumulate.
+| Variable           | Read by | Effect                                                       |
+| ------------------ | ------- | ------------------------------------------------------------ |
+| `CF_CXX` / `CXX`   | both    | Compiler to use before the default probe order.              |
+| `CF_REPO_ROOT`     | both    | Repository root (default: parent of `web/`).                 |
+| `CF_DATA_DIR`      | web     | Where `problems/` JSON files live.                           |
+| `CF_PROBLEMS_DIR`  | both    | Directory of `src/<problem>/` folders.                       |
+| `CF_START_PROBLEM` | web     | Reported by `/api/config` as a starting problem hint.        |
+| `CF_CXXFLAGS`      | CLI     | Full compile flags (default `-std=c++23 -O2 -Wall -Wextra`). |
+| `CF_TIMEOUT`       | CLI     | Execution limit in seconds.                                  |
+| `CF_CHECKER`       | CLI     | `lines` or `tokens`.                                         |
