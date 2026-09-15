@@ -48,7 +48,6 @@ fi
 CXXFLAGS="-std=c++23 -O2 -Wall -Wextra"
 INCLUDE_FLAGS="-I$INCLUDE_DIR"
 DEFAULT_TIMEOUT=5  # seconds
-DEFAULT_MEMORY_LIMIT=256  # MB
 VERBOSE=0
 TIMEOUT_CMD="timeout"
 
@@ -133,6 +132,7 @@ compile_solution() {
 
     print_info "Compiling: $(basename "$source_file")"
 
+    # shellcheck disable=SC2086  # CXXFLAGS/INCLUDE_FLAGS are intentionally word-split
     if ! compiler_output=$($COMPILER $CXXFLAGS $INCLUDE_FLAGS "$source_file" -o "$binary_name" 2>&1); then
         print_failure "Compilation failed for $source_file"
         echo -e "${RED}${compiler_output}${NC}"
@@ -152,12 +152,13 @@ run_with_timeout() {
 
     local temp_output
     temp_output=$(mktemp)
-    trap "rm -f $temp_output" RETURN
+    trap 'rm -f "$temp_output"' RETURN
 
-    # Run with timeout
-    if ! $TIMEOUT_CMD "$timeout_sec" "$binary" < "$input_file" > "$temp_output" 2>&1; then
-        local exit_code=$?
-
+    # Run with timeout. Capture the real status: `$?` after `if !` is the
+    # negated result, not the program's exit code.
+    local exit_code=0
+    $TIMEOUT_CMD "$timeout_sec" "$binary" < "$input_file" > "$temp_output" 2>&1 || exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
         # Exit code 124 = timeout
         if [[ $exit_code -eq 124 ]]; then
             print_failure "TIMEOUT (exceeded ${timeout_sec}s)"
@@ -235,34 +236,16 @@ test_solution() {
     return 0
 }
 
-test_all_in_directory() {
-    local test_dir="$1"
-
-    if [[ ! -d "$test_dir" ]]; then
-        print_failure "Test directory not found: $test_dir"
-        return 1
-    fi
-
-    print_header "Running all tests in $test_dir"
-
-    find "$test_dir" -maxdepth 1 -name "*.cpp" -type f | sort | while read -r source_file; do
-        test_solution "$source_file" \
-            "${test_dir}/$(basename "$source_file" .cpp)_input.txt" \
-            "${test_dir}/$(basename "$source_file" .cpp)_output.txt" \
-            "$DEFAULT_TIMEOUT"
-    done
-}
-
 run_parser_tests() {
-    if [[ -f "$TESTS_DIR/parser_test.sh" ]]; then
-        print_header "Parser Tests"
-        if ! bash "$TESTS_DIR/parser_test.sh"; then
-            print_failure "Parser tests failed"
+    if [[ -f "$TESTS_DIR/cli_test.sh" ]]; then
+        print_header "CLI Tests"
+        if ! bash "$TESTS_DIR/cli_test.sh"; then
+            print_failure "CLI tests failed"
             return 1
         fi
-        print_success "Parser tests passed"
+        print_success "CLI tests passed"
     else
-        print_warning "Parser test script not found: $TESTS_DIR/parser_test.sh"
+        print_warning "CLI test script not found: $TESTS_DIR/cli_test.sh"
     fi
     return 0
 }
@@ -274,7 +257,7 @@ run_shellcheck() {
     fi
 
     print_header "ShellCheck"
-    if ! shellcheck "$PROJECT_ROOT/scripts/cf" "$PROJECT_ROOT/scripts/test.sh"; then
+    if ! shellcheck "$PROJECT_ROOT/scripts/cf" "$PROJECT_ROOT/scripts/test.sh" "$PROJECT_ROOT/scripts/check.sh" "$PROJECT_ROOT/tests/cli_test.sh"; then
         print_failure "ShellCheck reported issues"
         return 1
     fi

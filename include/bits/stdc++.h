@@ -137,7 +137,7 @@
 #if __has_include(<concepts>)
 #include <concepts>
 #endif
-#if __has_include(<coroutine>)
+#if __has_include(<coroutine>) && (__cplusplus >= 202002L || defined(__cpp_impl_coroutine))
 #include <coroutine>
 #endif
 #if __has_include(<source_location>)

@@ -1,0 +1,15 @@
+# Normalise line endings so shell scripts and the C++ shim run unchanged on
+# Windows (Git Bash / WSL) checkouts. Binaries are left untouched.
+* text=auto
+
+scripts/cf     text eol=lf
+*.sh           text eol=lf
+Makefile       text eol=lf
+*.cpp          text eol=lf
+*.h            text eol=lf
+*.c++          text eol=lf
+
+*.png  binary
+*.ico  binary
+*.jpg  binary
+*.gif  binary

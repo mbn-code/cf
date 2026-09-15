@@ -8,6 +8,14 @@
 #   make run FILE=x      - Compile and run, with a portable timeout + timing
 #   make test FILE=x     - Compile and run against src/x/input.txt, diff expected
 #   make debug FILE=x    - Compile with debug symbols (-g)
+#   make check           - Shellcheck + CLI tests + web lint/typecheck/unit/build
+#   make check-quick     - Same without the production build
+#   make web-install     - npm install in web/
+#   make web-dev         - Start the workbench dev server
+#   make web-build       - Production build of the workbench
+#   make web-test        - Unit tests (vitest)
+#   make web-e2e         - Playwright end-to-end suite
+#   make validate        - Full release gate (scripts/validate.sh)
 #   make clean           - Remove build artifacts
 #   make help            - Show this help
 #
@@ -27,7 +35,7 @@
 #     works on macOS (bash 3.2 / zsh) without coreutils.
 ################################################################################
 
-.PHONY: all build run test debug clean help
+.PHONY: all build run test debug clean help check check-quick web-install web-dev web-build web-test web-e2e validate
 
 # ==================== Configuration ====================
 
@@ -39,12 +47,22 @@ CXXFLAGS ?= -std=$(CXXSTD) -O2 -Wall -Wextra
 INCLUDE := -I include
 SRC_DIR := src
 BUILD_DIR := build
+WEB_DIR := web
 FILE    ?= solution
 TL      ?= 5
 
 .DEFAULT_GOAL := help
 
-# ==================== Targets ====================
+# Resolve FILE to a source path (shared by build/run/test/debug).
+define resolve_src
+	src=""; \
+	if [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then src="$(SRC_DIR)/$(FILE).cpp"; \
+	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then src="$(SRC_DIR)/$(FILE)/solution.cpp"; \
+	elif [ -f "$(FILE)" ]; then src="$(FILE)"; fi; \
+	if [ -z "$$src" ]; then echo "error: cannot find source for FILE=$(FILE)"; exit 1; fi
+endef
+
+# ==================== C++ targets ====================
 
 all:
 	@mkdir -p $(BUILD_DIR); \
@@ -62,22 +80,14 @@ all:
 
 build:
 	@mkdir -p $(BUILD_DIR); \
-	src=""; \
-	if [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then src="$(SRC_DIR)/$(FILE).cpp"; \
-	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then src="$(SRC_DIR)/$(FILE)/solution.cpp"; \
-	elif [ -f "$(FILE)" ]; then src="$(FILE)"; fi; \
-	if [ -z "$$src" ]; then echo "error: cannot find source for FILE=$(FILE)"; exit 1; fi; \
+	$(resolve_src); \
 	out="$(BUILD_DIR)/$(FILE)"; mkdir -p "`dirname "$$out"`"; \
 	echo "Compiling $$src -> $$out with $(CXX) ..."; \
 	$(CXX) $(CXXFLAGS) $(INCLUDE) "$$src" -o "$$out" && echo "OK: $$out"
 
 run:
 	@mkdir -p $(BUILD_DIR); \
-	src=""; \
-	if [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then src="$(SRC_DIR)/$(FILE).cpp"; \
-	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then src="$(SRC_DIR)/$(FILE)/solution.cpp"; \
-	elif [ -f "$(FILE)" ]; then src="$(FILE)"; fi; \
-	if [ -z "$$src" ]; then echo "error: cannot find source for FILE=$(FILE)"; exit 1; fi; \
+	$(resolve_src); \
 	bin="$(BUILD_DIR)/cf_run_bin"; \
 	echo "Compiling $$src with $(CXX) ..."; \
 	if ! $(CXX) $(CXXFLAGS) $(INCLUDE) "$$src" -o "$$bin"; then echo "compile failed"; exit 1; fi; \
@@ -100,11 +110,7 @@ run:
 
 test:
 	@mkdir -p $(BUILD_DIR); \
-	src=""; \
-	if [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then src="$(SRC_DIR)/$(FILE).cpp"; \
-	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then src="$(SRC_DIR)/$(FILE)/solution.cpp"; \
-	elif [ -f "$(FILE)" ]; then src="$(FILE)"; fi; \
-	if [ -z "$$src" ]; then echo "error: cannot find source for FILE=$(FILE)"; exit 1; fi; \
+	$(resolve_src); \
 	bin="$(BUILD_DIR)/cf_test_bin"; \
 	echo "Compiling $$src with $(CXX) ..."; \
 	if ! $(CXX) $(CXXFLAGS) $(INCLUDE) "$$src" -o "$$bin"; then echo "compile failed"; exit 1; fi; \
@@ -129,11 +135,7 @@ test:
 
 debug:
 	@mkdir -p $(BUILD_DIR); \
-	src=""; \
-	if [ -f "$(SRC_DIR)/$(FILE).cpp" ]; then src="$(SRC_DIR)/$(FILE).cpp"; \
-	elif [ -f "$(SRC_DIR)/$(FILE)/solution.cpp" ]; then src="$(SRC_DIR)/$(FILE)/solution.cpp"; \
-	elif [ -f "$(FILE)" ]; then src="$(FILE)"; fi; \
-	if [ -z "$$src" ]; then echo "error: cannot find source for FILE=$(FILE)"; exit 1; fi; \
+	$(resolve_src); \
 	out="$(BUILD_DIR)/$(FILE)_debug"; mkdir -p "`dirname "$$out"`"; \
 	echo "Compiling $$src with debug symbols ..."; \
 	$(CXX) $(CXXFLAGS) -g $(INCLUDE) "$$src" -o "$$out" && echo "Debug binary: $$out"
@@ -143,16 +145,52 @@ clean:
 	find $(SRC_DIR) -name '*.o' -delete 2>/dev/null || true; \
 	echo "Cleaned build artifacts"
 
+# ==================== Quality gates ====================
+
+check:
+	@bash scripts/check.sh
+
+check-quick:
+	@bash scripts/check.sh --quick
+
+validate:
+	@bash scripts/validate.sh
+
+# ==================== Web workbench ====================
+
+web-install:
+	@cd $(WEB_DIR) && npm install --include=dev --no-audit --no-fund
+
+web-dev:
+	@cd $(WEB_DIR) && npm run dev
+
+web-build:
+	@cd $(WEB_DIR) && npm run build
+
+web-test:
+	@cd $(WEB_DIR) && npm test
+
+web-e2e:
+	@cd $(WEB_DIR) && npx playwright install chromium && npm run e2e
+
 help:
 	@echo "cf Makefile - portable C++ build/run/test"; \
 	echo ""; \
-	echo "Targets:"; \
+	echo "C++ targets:"; \
 	echo "  make all            Compile every src/**/*.cpp into build/"; \
 	echo "  make build FILE=x   Compile one source"; \
 	echo "  make run FILE=x     Compile and run (timeout $(TL)s, timed)"; \
 	echo "  make test FILE=x    Compile and run vs src/x/input.txt"; \
 	echo "  make debug FILE=x   Compile with -g"; \
 	echo "  make clean          Remove build artifacts"; \
+	echo ""; \
+	echo "Quality gates:"; \
+	echo "  make check          shellcheck + CLI tests + web lint/typecheck/unit/build"; \
+	echo "  make check-quick    Same, without the production build"; \
+	echo "  make validate       Full release gate incl. Playwright e2e"; \
+	echo ""; \
+	echo "Web workbench:"; \
+	echo "  make web-install | web-dev | web-build | web-test | web-e2e"; \
 	echo ""; \
 	echo "Knobs: FILE, TL (time limit s), CXXSTD, CXXFLAGS, CXX"; \
 	echo "Compiler: $(CXX)"; \

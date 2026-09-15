@@ -1,44 +1,48 @@
 #!/usr/bin/env bash
 
 ################################################################################
-# cf - Production-grade Codeforces CLI Tool
+# cf - Codeforces CLI Tool
 #
-# Main command-line interface for C++ competitive programming
+# Main command-line interface for C++ competitive programming.
 #
 # Usage:
-#   cf template <name>         - Create new problem template
-#   cf <name> [input]          - Compile and run solution
-#   cf test                    - Run all tests with timeout protection
-#   cf serve [problem]         - Start web interface
+#   cf template <name> [--from T]  - Create a new problem directory
+#   cf <name|file> [input]         - Compile and run a solution
+#   cf test [name]                 - Run every sample in problem.txt
+#   cf stress [name] [-n N]        - Solution vs brute force on generated input
+#   cf samples [name]              - Print the parsed samples
+#   cf watch [name]                - Re-run the samples whenever a file changes
+#   cf serve [name]                - Start the web workbench
+#   cf doctor                      - Check the toolchain
+#   cf clean                       - Drop the build cache
+#   cf update                      - Pull the latest version
 #
 # Examples:
-#   cf template 1000A          - Create src/1000A/ with solution.cpp
-#   cf 1000A input.txt         - Compile and run with input.txt
-#   cf 1000A "5\n1 2 3 4 5"    - Compile and run with inline input
-#   cf test                    - Run all tests with timeout protection
-#   cf serve                   - Start web interface
-#   cf serve 1000A             - Create (if needed) and serve problem 1000A
+#   cf template 1000A              - Create ./1000A with solution.cpp + problem.txt
+#   cf 1000A                       - Run src/1000A (or ./1000A) against sample #1
+#   cf 1000A "5\n1 2 3 4 5"        - Run with inline stdin
+#   cf problem.txt --sample 2      - Run sample #2 of problem.txt
+#   cf test --checker tokens       - Compare whitespace-insensitively
+#   cf stress -n 500               - Run 500 iterations of brute.cpp vs solution
 #
 # Features:
-#   - Auto-detects .cpp files
-#   - Handles multi-file compilation
-#   - Timeout protection (prevents infinite loops)
-#   - Input validation and error checking
-#   - Cross-platform (Linux/macOS/WSL)
-#   - Idempotent and robust
-#   - Production-grade error handling
+#   - Auto-detects .cpp files and problem.txt in the working directory
+#   - Timeout protection, per-sample timing, build cache
+#   - Line and token output checkers
+#   - Cross-platform (Linux / macOS / WSL / Git Bash)
 #
 ################################################################################
 
 set -euo pipefail
+
+CF_VERSION="1.0.0"
 
 # ==================== CONFIGURATION ====================
 
 # Determine repository root (handle symlinks)
 if [ -f "${BASH_SOURCE[0]}" ]; then
     SCRIPT_PATH="${BASH_SOURCE[0]}"
-    if command -v readlink &> /dev/null;
-        then
+    if command -v readlink &> /dev/null; then
         SCRIPT_PATH="$(readlink -f "$SCRIPT_PATH" 2>/dev/null || printf '%s' "$SCRIPT_PATH")"
     fi
     SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
@@ -57,14 +61,14 @@ SRC_DIR="$REPO_ROOT/src"
 INCLUDE_DIR="$REPO_ROOT/include"
 SCRIPTS_DIR="$REPO_ROOT/scripts"
 BUILD_DIR="$REPO_ROOT/build"
-TESTS_DIR="$REPO_ROOT/tests"
+TEMPLATES_DIR="$REPO_ROOT/templates"
 
-# Compiler selection: prefer g++, fall back to clang++
-if command -v g++ &> /dev/null;
-    then
+# Compiler selection: CF_CXX/CXX override, then g++, then clang++
+if [ -n "${CF_CXX:-${CXX:-}}" ] && command -v "${CF_CXX:-${CXX:-}}" &> /dev/null; then
+    COMPILER="${CF_CXX:-${CXX:-}}"
+elif command -v g++ &> /dev/null; then
     COMPILER="g++"
-elif command -v clang++ &> /dev/null;
-    then
+elif command -v clang++ &> /dev/null; then
     COMPILER="clang++"
 else
     printf '%s\n' "Error: No C++ compiler found. Install g++ or clang++." >&2
@@ -77,18 +81,20 @@ CXXFLAGS_DEFAULT="-std=c++23 -O2 -Wall -Wextra"
 # Execution timeout (seconds)
 EXEC_TIMEOUT_DEFAULT=5
 
-# Color codes
-if [ -t 1 ]; then
+# Color codes (disabled when not a TTY or NO_COLOR is set)
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     RED='\033[0;31m'
     GREEN='\033[0;32m'
     YELLOW='\033[1;33m'
     BLUE='\033[0;34m'
+    DIM='\033[2m'
     NC='\033[0m'
 else
     RED=''
     GREEN=''
     YELLOW=''
     BLUE=''
+    DIM=''
     NC=''
 fi
 
@@ -99,7 +105,6 @@ VERBOSE=${CF_VERBOSE:-0}
 EXIT_USAGE=2
 EXIT_IO=3
 EXIT_COMPILE=4
-EXIT_RUNTIME=5
 EXIT_UPDATE=6
 
 # Config overrides (optional)
@@ -116,6 +121,9 @@ COMPILATION_WARNINGS=""
 CXXFLAGS="${CF_CXXFLAGS:-$CXXFLAGS_DEFAULT}"
 EXEC_TIMEOUT="${CF_TIMEOUT:-$EXEC_TIMEOUT_DEFAULT}"
 BUILD_CACHE_DIR="${CF_BUILD_CACHE_DIR:-$BUILD_DIR/.cache}"
+# Output checker: "lines" (exact lines, trailing whitespace ignored) or
+# "tokens" (whitespace-insensitive, like the Codeforces wcmp checker).
+CHECKER="${CF_CHECKER:-lines}"
 
 # ==================== HELPER FUNCTIONS ====================
 
@@ -149,7 +157,7 @@ print_header() {
 
 print_warnings_if_any() {
     if [ -n "${COMPILATION_WARNINGS:-}" ]; then
-        printf "\n${YELLOW}Compilation Warnings:${NC}\n"
+        printf '%b\n' "\n${YELLOW}Compilation Warnings:${NC}"
         printf '%s\n' "$COMPILATION_WARNINGS"
     fi
 }
@@ -180,15 +188,56 @@ validate_dir() {
     fi
 }
 
-# Find .cpp files in a directory
-find_cpp_files() {
-    local dir="$1"
-    find "$dir" -maxdepth 1 -name "*.cpp" -type f
-}
-
 # Check if directory exists
 dir_exists() {
     [ -d "$1" ]
+}
+
+# Milliseconds since the epoch (bash 5 EPOCHREALTIME, GNU date, or seconds).
+now_ms() {
+    if [ -n "${EPOCHREALTIME:-}" ]; then
+        local s="${EPOCHREALTIME%.*}"
+        local us="${EPOCHREALTIME#*.}"
+        printf '%s' "$(( s * 1000 + 10#${us:0:3} ))"
+    elif date +%s%N 2>/dev/null | grep -q '^[0-9]\{13,\}$'; then
+        local ns
+        ns=$(date +%s%N)
+        printf '%s' "$(( ns / 1000000 ))"
+    else
+        printf '%s' "$(( $(date +%s) * 1000 ))"
+    fi
+}
+
+# Validate the checker name
+validate_checker() {
+    case "$1" in
+        lines|tokens) return 0 ;;
+        *) error_exit "Unknown checker: $1 (use lines or tokens)" "$EXIT_USAGE" ;;
+    esac
+}
+
+# Resolve a problem directory from an argument (or the cwd). Prints the
+# absolute path, or nothing when no problem context can be found.
+#   1. <arg> as a directory containing problem.txt
+#   2. src/<arg>
+#   3. the cwd, when it holds problem.txt
+resolve_problem_dir() {
+    local arg="${1:-}"
+    if [ -n "$arg" ]; then
+        if [ -d "$arg" ] && [ -f "$arg/problem.txt" ]; then
+            (cd "$arg" && pwd)
+            return 0
+        elif [ -d "$SRC_DIR/$arg" ] && [ -f "$SRC_DIR/$arg/problem.txt" ]; then
+            printf '%s' "$SRC_DIR/$arg"
+            return 0
+        fi
+        return 1
+    fi
+    if [ -f "$PWD/problem.txt" ]; then
+        printf '%s' "$PWD"
+        return 0
+    fi
+    return 1
 }
 
 # Global flag to track if timeout warning has been shown
@@ -196,19 +245,16 @@ TIMEOUT_WARNING_SHOWN=0
 
 # Check for timeout command availability
 check_timeout_cmd() {
-    if command -v timeout &> /dev/null;
-        then
+    if command -v timeout &> /dev/null; then
         TIMEOUT_CMD="timeout"
         return 0
-    elif command -v gtimeout &> /dev/null;
-        then
+    elif command -v gtimeout &> /dev/null; then
         TIMEOUT_CMD="gtimeout"
         return 0
     else
         if [ "$TIMEOUT_WARNING_SHOWN" -eq 0 ]; then
             print_warning "timeout command not found; execution timeout protection disabled"
-            if command -v brew &> /dev/null;
-                then
+            if command -v brew &> /dev/null; then
                 print_info "Install on macOS: brew install coreutils"
             fi
             TIMEOUT_WARNING_SHOWN=1
@@ -224,7 +270,7 @@ add_cleanup() {
 }
 run_cleanup() {
     local item
-    for item in "${CLEANUP_ITEMS[@]}"; do
+    for item in ${CLEANUP_ITEMS[@]+"${CLEANUP_ITEMS[@]}"}; do
         rm -f "$item" 2>/dev/null || true
     done
 }
@@ -234,18 +280,16 @@ trap 'run_cleanup' EXIT
 compute_sources_hash() {
     local sources=("$@")
     local hash_cmd=""
-    if command -v sha256sum &> /dev/null;
-        then
+    if command -v sha256sum &> /dev/null; then
         hash_cmd="sha256sum"
-    elif command -v shasum &> /dev/null;
-        then
+    elif command -v shasum &> /dev/null; then
         hash_cmd="shasum -a 256"
     else
         return 1
     fi
 
     {
-        printf '%s\n' "$CXXFLAGS"
+        printf '%s\n' "$COMPILER" "$CXXFLAGS"
         for s in "${sources[@]}"; do
             printf '%s\n' "$s"
             cat "$s"
@@ -253,7 +297,8 @@ compute_sources_hash() {
     } | eval "$hash_cmd" | awk '{print $1}'
 }
 
-# Safe execution with timeout and resource tracking
+# Safe execution with timeout and resource tracking. Sets LAST_RUN_MS.
+LAST_RUN_MS=0
 safe_execute() {
     local output_file=""
     if [[ "$1" == --output=* ]]; then
@@ -275,7 +320,7 @@ safe_execute() {
     cmd+=("$binary")
 
     local exit_code=0
-    
+
     local use_time=0
     if [ -x "/usr/bin/time" ]; then
         # Check if /usr/bin/time supports the -f flag (GNU time)
@@ -284,6 +329,8 @@ safe_execute() {
         fi
     fi
 
+    local started
+    started=$(now_ms)
     if [ "$use_time" -eq 1 ]; then
         if [ -n "$output_file" ]; then
             if [ -n "$input_file" ] && [ -f "$input_file" ]; then
@@ -317,13 +364,13 @@ safe_execute() {
         fi
         exit_code=$?
     fi
+    LAST_RUN_MS=$(( $(now_ms) - started ))
 
     if [ $exit_code -eq 124 ]; then
         print_error "Execution timeout (exceeded ${timeout_sec}s)"
         return 1
     elif [ $exit_code -ne 0 ]; then
-        # We don't always want to return 1 here because some solutions might return non-zero but still be correct (though rare in CP)
-        # But for Codeforces, exit code should be 0.
+        # Codeforces requires exit code 0.
         print_error "Runtime error (exit code: $exit_code)"
         return 1
     fi
@@ -342,6 +389,7 @@ safe_compile() {
     COMPILATION_WARNINGS=""
 
     local compile_out
+    # shellcheck disable=SC2086  # CXXFLAGS is intentionally word-split
     compile_out=$($COMPILER $CXXFLAGS -I "$INCLUDE_DIR" "${sources[@]}" -o "$output" 2>&1)
     local ret=$?
 
@@ -357,6 +405,36 @@ safe_compile() {
     return 0
 }
 
+# Compile the given sources into the build cache (or a temp file when hashing
+# is unavailable). Prints the binary path. Honors CF_FORCE_REBUILD=1.
+compile_cached() {
+    local label="$1"
+    shift
+    local sources=("$@")
+    local output_file
+    local sources_hash=""
+    sources_hash=$(compute_sources_hash "${sources[@]}") || true
+    if [ -n "$sources_hash" ]; then
+        mkdir -p "$BUILD_CACHE_DIR" || error_exit "Failed to create build cache directory" "$EXIT_IO"
+        output_file="$BUILD_CACHE_DIR/$sources_hash"
+    else
+        output_file=$(mktemp) || error_exit "Failed to create temp file" "$EXIT_IO"
+        add_cleanup "$output_file"
+    fi
+
+    if [ -x "$output_file" ] && [ -n "$sources_hash" ] && [ "${CF_FORCE_REBUILD:-0}" -ne 1 ]; then
+        print_info "$label: using cached build" >&2
+    else
+        print_info "$label: compiling with $COMPILER..." >&2
+        if ! safe_compile "$output_file" "${sources[@]}"; then
+            rm -f "$output_file" 2>/dev/null || true
+            return 1
+        fi
+        chmod +x "$output_file" 2>/dev/null || true
+    fi
+    printf '%s' "$output_file"
+}
+
 # Extract example block (input or output) from problem description file
 extract_example_block() {
     local file="$1"
@@ -368,8 +446,7 @@ extract_example_block() {
     fi
 
     # Check if this looks like a problem description with Examples section
-    if grep -qi "Examples\|Example" "$file" 2>/dev/null;
-        then
+    if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
         awk -v idx="$sample_index" -v target="$target" '
             function norm(s){ gsub(/\r/, "", s); return s }
             function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
@@ -382,7 +459,7 @@ extract_example_block() {
             {
                 line=norm($0)
                 if (!in_examples && line ~ /^[[:space:]]*$/) next
-                if (!in_examples && tolower(line) ~ /^examples?$/) { in_examples=1; next }
+                if (!in_examples && tolower(line) ~ /^examples?:?$/) { in_examples=1; next }
                 if (!in_examples && tolower(line) ~ /^example[[:space:]]*[0-9]*$/) { in_examples=1; next }
                 if (!in_examples) next
 
@@ -429,8 +506,7 @@ extract_test_input() {
         return 1
     fi
 
-    if grep -qi "Examples\|Example" "$file" 2>/dev/null;
-        then
+    if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
         extract_example_block "$file" "$sample_index" "input"
     else
         # Regular input file, return as-is
@@ -447,8 +523,7 @@ extract_expected_output() {
         return 1
     fi
 
-    if grep -qi "Examples\|Example" "$file" 2>/dev/null;
-        then
+    if grep -qi "Examples\|Example" "$file" 2>/dev/null; then
         extract_example_block "$file" "$sample_index" "output"
     else
         return 1
@@ -463,8 +538,7 @@ count_samples() {
         return 0
     fi
 
-    if ! grep -qi "Examples\|Example" "$file" 2>/dev/null;
-        then
+    if ! grep -qi "Examples\|Example" "$file" 2>/dev/null; then
         printf '0'
         return 0
     fi
@@ -478,7 +552,7 @@ count_samples() {
         {
             line=norm($0)
             if (!in_examples && line ~ /^[[:space:]]*$/) next
-            if (!in_examples && tolower(line) ~ /^examples?$/) { in_examples=1; next }
+            if (!in_examples && tolower(line) ~ /^examples?:?$/) { in_examples=1; next }
             if (!in_examples && tolower(line) ~ /^example[[:space:]]*[0-9]*$/) { in_examples=1; next }
             if (!in_examples) next
 
@@ -488,8 +562,14 @@ count_samples() {
     ' "$file"
 }
 
-# Normalize output for comparison: strip \r, trim blank edges, trim trailing spaces per line
+# Normalize output for comparison according to $CHECKER.
+#   lines:  strip \r, trim blank edges, trim trailing spaces per line
+#   tokens: one whitespace-separated token per line
 normalize_output() {
+    if [ "$CHECKER" = "tokens" ]; then
+        printf '%s' "$1" | tr -d '\r' | tr -s '[:space:]' '\n' | sed '/^$/d'
+        return 0
+    fi
     printf '%s' "$1" | tr -d '\r' | awk '
         { sub(/[[:space:]]+$/, "", $0); lines[NR]=$0 }
         END {
@@ -504,13 +584,59 @@ normalize_output() {
     '
 }
 
+# Compare two output strings under the active checker. Returns 0 on match.
+outputs_match() {
+    local expected="$1"
+    local actual="$2"
+    local a b
+    a=$(mktemp)
+    b=$(mktemp)
+    add_cleanup "$a"
+    add_cleanup "$b"
+    normalize_output "$expected" > "$a"
+    normalize_output "$actual" > "$b"
+    cmp -s "$a" "$b"
+}
+
+# Collect the .cpp files of a problem directory into the cpp_files array.
+collect_cpp_files() {
+    local dir="$1"
+    cpp_files=()
+    while IFS= read -r file; do
+        [ -n "$file" ] && cpp_files+=("$file")
+    done < <(find "$dir" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null | sort)
+}
+
 # ==================== TEMPLATE COMMAND ====================
 
 cmd_template() {
-    local problem_name="$1"
+    local problem_name=""
+    local from=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --from|-f)
+                shift || true
+                [ -z "${1:-}" ] && error_exit "Missing value for --from" "$EXIT_USAGE"
+                from="$1"
+                ;;
+            --help|-h)
+                cmd_help
+                return 0
+                ;;
+            *)
+                if [ -z "$problem_name" ]; then
+                    problem_name="$1"
+                else
+                    print_warning "Ignoring extra argument: $1"
+                fi
+                ;;
+        esac
+        shift || true
+    done
 
     if [ -z "$problem_name" ]; then
-        print_error "Usage: cf template <name>"
+        print_error "Usage: cf template <name> [--from dp|graph|math]"
         printf '%s\n' "Example: cf template 1000A"
         return 1
     fi
@@ -519,6 +645,20 @@ cmd_template() {
     if ! [[ "$problem_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         print_error "Invalid problem name: $problem_name (use alphanumeric, dash, or underscore)"
         return 1
+    fi
+
+    # Pick the template source
+    local template_src="$SRC_DIR/template.cpp"
+    if [ -n "$from" ]; then
+        if [ -f "$from" ]; then
+            template_src="$from"
+        elif [ -f "$TEMPLATES_DIR/$from.cpp" ]; then
+            template_src="$TEMPLATES_DIR/$from.cpp"
+        else
+            local available
+            available=$(find "$TEMPLATES_DIR" -maxdepth 1 -name '*.cpp' -exec basename {} .cpp \; 2>/dev/null | sort | tr '\n' ' ')
+            error_exit "Template not found: $from (available: ${available:-none})" "$EXIT_IO"
+        fi
     fi
 
     # Create problem directory in current working directory
@@ -537,11 +677,11 @@ cmd_template() {
     if [ -f "$solution_file" ]; then
         print_info "Solution already exists: $solution_file"
     else
-        if [ -f "$SRC_DIR/template.cpp" ]; then
-            cp "$SRC_DIR/template.cpp" "$solution_file" || error_exit "Failed to copy template" "$EXIT_IO"
-            print_success "Created solution: $solution_file"
+        if [ -f "$template_src" ]; then
+            cp "$template_src" "$solution_file" || error_exit "Failed to copy template" "$EXIT_IO"
+            print_success "Created solution: $solution_file (from $(basename "$template_src"))"
         else
-            error_exit "Template file not found: $SRC_DIR/template.cpp" "$EXIT_IO"
+            error_exit "Template file not found: $template_src" "$EXIT_IO"
         fi
     fi
 
@@ -578,8 +718,7 @@ EOF
     fi
 
     # Open files in VS Code if available
-    if [ "${CF_SERVE_MODE:-0}" -eq 0 ] && command -v code &> /dev/null;
-        then
+    if [ "${CF_SERVE_MODE:-0}" -eq 0 ] && [ "${CF_NO_EDITOR:-0}" -eq 0 ] && command -v code &> /dev/null; then
         print_info "Opening files in VS Code..."
         code "$problem_file" "$solution_file" 2>/dev/null || true
         print_success "Opened in VS Code"
@@ -590,7 +729,7 @@ EOF
         printf '%s\n' "Next steps:"
         printf '%s\n' "  1. Paste problem statement in $problem_file"
         printf '%s\n' "  2. Edit solution in $solution_file"
-        printf '%s\n' "  3. cd $problem_name && cf problem.txt"
+        printf '%s\n' "  3. cd $problem_name && cf test"
     fi
 }
 
@@ -612,21 +751,32 @@ cmd_run() {
                 fi
                 sample_index="$1"
                 sample_set=1
-                ;; 
+                ;;
             --input|--file|-i)
                 shift || true
                 if [ -z "${1:-}" ]; then
                     error_exit "Missing value for --input" "$EXIT_USAGE"
                 fi
                 input_arg="$1"
-                ;; 
+                ;;
+            --checker|-c)
+                shift || true
+                [ -z "${1:-}" ] && error_exit "Missing value for --checker" "$EXIT_USAGE"
+                CHECKER="$1"
+                validate_checker "$CHECKER"
+                ;;
+            --timeout|-t)
+                shift || true
+                [ -z "${1:-}" ] && error_exit "Missing value for --timeout" "$EXIT_USAGE"
+                EXEC_TIMEOUT="$1"
+                ;;
             --stdin)
                 use_stdin=1
-                ;; 
+                ;;
             --help|-h)
                 cmd_help
                 return 0
-                ;; 
+                ;;
             *)
                 if [ -z "$input_arg" ]; then
                     input_arg="$1"
@@ -652,14 +802,12 @@ cmd_run() {
     # (this is what makes `cf <problem>` work from the repo root).
     local prob_dir=""
     if [ -n "$input_arg" ] && [ ! -f "$input_arg" ]; then
-        if [ -d "$input_arg" ] && [ -f "$input_arg/problem.txt" ]; then
-            prob_dir="$(cd "$input_arg" && pwd)"
-            input_arg="$prob_dir/problem.txt"
-        elif [ -d "$SRC_DIR/$input_arg" ] && [ -f "$SRC_DIR/$input_arg/problem.txt" ]; then
-            prob_dir="$SRC_DIR/$input_arg"
+        if prob_dir=$(resolve_problem_dir "$input_arg"); then
             input_arg="$prob_dir/problem.txt"
         elif [ "$(basename "$PWD")" = "$input_arg" ] && [ -f "$PWD/problem.txt" ]; then
             input_arg="$PWD/problem.txt"
+        else
+            prob_dir=""
         fi
     fi
 
@@ -669,40 +817,17 @@ cmd_run() {
 
     # Find .cpp files in the problem dir (when named) or current directory.
     local src_ctx="${prob_dir:-$PWD}"
-    cpp_files=()
-    while IFS= read -r file; do
-        [ -n "$file" ] && cpp_files+=("$file")
-    done < <(find "$src_ctx" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
+    collect_cpp_files "$src_ctx"
     if [ ${#cpp_files[@]} -eq 0 ]; then
         error_exit "No C++ file found in $src_ctx" "$EXIT_USAGE"
     fi
 
     print_info "Using: ${#cpp_files[@]} source file(s)"
 
-    # Prepare output file (build cache)
+    # Compile (build cache)
     local output_file
-    local sources_hash=""
-    sources_hash=$(compute_sources_hash "${cpp_files[@]}") || true
-    if [ -n "$sources_hash" ]; then
-        mkdir -p "$BUILD_CACHE_DIR" || error_exit "Failed to create build cache directory" "$EXIT_IO"
-        output_file="$BUILD_CACHE_DIR/$sources_hash"
-    else
-        output_file=$(mktemp) || error_exit "Failed to create temp file" "$EXIT_IO"
-        add_cleanup "$output_file"
-    fi
-
-    # Compile
-    if [ -x "$output_file" ] && [ -n "$sources_hash" ] && [ "${CF_FORCE_REBUILD:-0}" -ne 1 ]; then
-        print_info "Using cached build"
-    else
-        print_info "Compiling with $COMPILER..."
-        if ! safe_compile "$output_file" "${cpp_files[@]}"; then
-            rm -f "$output_file" 2>/dev/null || true
-            return 1
-        fi
-        chmod +x "$output_file" 2>/dev/null || true
-        print_success "Compiled successfully"
-    fi
+    output_file=$(compile_cached "solution" "${cpp_files[@]}") || return 1
+    print_success "Compiled successfully"
 
     # Prepare input
     local input_data=""
@@ -726,8 +851,7 @@ cmd_run() {
             print_info "Running with input from: $input_arg"
 
             # Check if this is a problem file and extract expected output
-            if grep -qi "Examples\|Example" "$input_arg" 2>/dev/null;
-                then
+            if grep -qi "Examples\|Example" "$input_arg" 2>/dev/null; then
                 is_problem_file=true
                 local sample_count
                 sample_count=$(count_samples "$input_arg")
@@ -793,7 +917,9 @@ cmd_run() {
     local tmp_actual_output=""
     if [ -n "$temp_input" ]; then
         tmp_actual_output=$(mktemp)
+        add_cleanup "$tmp_actual_output"
         if ! safe_execute --output="$tmp_actual_output" "$output_file" "$temp_input"; then
+            cat "$tmp_actual_output" 2>/dev/null || true
             print_warnings_if_any
             return 1
         fi
@@ -808,6 +934,7 @@ cmd_run() {
     fi
 
     printf -- '\n---\n'
+    printf '%b\n' "${DIM}Elapsed: ${LAST_RUN_MS} ms${NC}"
 
     # Display expected output if available
     if [ "$is_problem_file" = true ] && [ "$compare_enabled" = true ]; then
@@ -818,24 +945,18 @@ cmd_run() {
             printf '%s' "$expected_output"
             printf -- '\n---\n'
 
-            # Create temporary file for normalization to avoid shell variable limitations with null bytes
-            local tmp_normalized_actual
-            local tmp_normalized_expected
-            tmp_normalized_actual=$(mktemp)
-            tmp_normalized_expected=$(mktemp)
-            add_cleanup "$tmp_normalized_actual"
-            add_cleanup "$tmp_normalized_expected"
-
-            # Normalize outputs from files
-            normalize_output "$(cat "$tmp_actual_output")" > "$tmp_normalized_actual"
-            normalize_output "$expected_output" > "$tmp_normalized_expected"
-
-            # Compare normalized outputs from files
-            if cmp -s "$tmp_normalized_actual" "$tmp_normalized_expected"; then
+            if outputs_match "$expected_output" "$(cat "$tmp_actual_output")"; then
                 print_success "Output matches expected."
             else
                 print_warning "Output does not match expected."
-                rm -f "$tmp_actual_output" 2>/dev/null || true
+                if [ "$CHECKER" = "lines" ]; then
+                    local saved_checker="$CHECKER"
+                    CHECKER="tokens"
+                    if outputs_match "$expected_output" "$(cat "$tmp_actual_output")"; then
+                        print_info "Tokens match; only whitespace differs (try --checker tokens)."
+                    fi
+                    CHECKER="$saved_checker"
+                fi
                 print_warnings_if_any
                 return 1
             fi
@@ -846,9 +967,7 @@ cmd_run() {
         print_warning "Expected output available but input was interactive; skipping compare"
     fi
 
-    # Cleanup
-    rm -f "$tmp_actual_output" 2>/dev/null || true
-
+    print_warnings_if_any
     print_success "Execution complete"
 }
 
@@ -857,101 +976,94 @@ cmd_run() {
 cmd_test_all() {
     local prob_dir="$1"
     local prob_file="$prob_dir/problem.txt"
-    
+
     validate_dir "$prob_dir"
     validate_file "$prob_file"
-    
-    # Find .cpp files
-    cpp_files=()
-    while IFS= read -r file; do
-        [ -n "$file" ] && cpp_files+=("$file")
-    done < <(find "$prob_dir" -maxdepth 1 -name "*.cpp" -type f 2>/dev/null)
-    if [ ${#cpp_files[@]} -eq 0 ]; then
+
+    # Find .cpp files (brute/generator sources are not part of the solution)
+    collect_cpp_files "$prob_dir"
+    local sources=()
+    local f
+    for f in ${cpp_files[@]+"${cpp_files[@]}"}; do
+        case "$(basename "$f")" in
+            brute.cpp|gen.cpp|generator.cpp) ;;
+            *) sources+=("$f") ;;
+        esac
+    done
+    if [ ${#sources[@]} -eq 0 ]; then
         error_exit "No C++ file found in $prob_dir" "$EXIT_USAGE"
     fi
 
     print_info "Testing problem in: $prob_dir"
-    print_info "Found ${#cpp_files[@]} source file(s)"
+    print_info "Found ${#sources[@]} source file(s), checker: $CHECKER"
 
     # Compile
     local output_binary
-    output_binary=$(mktemp)
-    add_cleanup "$output_binary"
-    
-    print_info "Compiling..."
-    if ! safe_compile "$output_binary" "${cpp_files[@]}"; then
-        return 1
-    fi
-    chmod +x "$output_binary"
+    output_binary=$(compile_cached "solution" "${sources[@]}") || return 1
 
     local sample_count
     sample_count=$(count_samples "$prob_file")
-    
+
     if [ "$sample_count" -eq 0 ]; then
         print_warning "No samples found in $prob_file"
         return 0
     fi
 
     print_info "Found $sample_count samples. Starting tests..."
-    
+
     local passed=0
     local failed=0
+    local max_ms=0
 
     for ((i=1; i<=sample_count; i++)); do
         printf '\n'
         print_info "Running Sample #$i..."
-        
+
         local temp_input
-        local temp_expected
         local temp_actual
         temp_input=$(mktemp)
-        temp_expected=$(mktemp)
         temp_actual=$(mktemp)
         add_cleanup "$temp_input"
-        add_cleanup "$temp_expected"
         add_cleanup "$temp_actual"
 
         if ! extract_test_input "$prob_file" "$i" > "$temp_input"; then
             print_warning "Failed to extract input for sample #$i"
             continue
         fi
-        
+
         local expected_data
         expected_data=$(extract_expected_output "$prob_file" "$i") || true
-        printf '%s' "$expected_data" > "$temp_expected"
 
         if ! safe_execute --output="$temp_actual" "$output_binary" "$temp_input"; then
-            print_error "Sample #$i: Runtime Error or Timeout"
+            print_error "Sample #$i: Runtime Error or Timeout (${LAST_RUN_MS} ms)"
+            sed 's/^/  /' "$temp_actual" | head -20
             failed=$((failed + 1))
             continue
         fi
+        [ "$LAST_RUN_MS" -gt "$max_ms" ] && max_ms="$LAST_RUN_MS"
 
-        # Compare
-        local norm_actual
-        local norm_expected
-        norm_actual=$(mktemp)
-        norm_expected=$(mktemp)
-        add_cleanup "$norm_actual"
-        add_cleanup "$norm_expected"
-        
-        normalize_output "$(cat "$temp_actual")" > "$norm_actual"
-        normalize_output "$expected_data" > "$norm_expected"
-
-        if cmp -s "$norm_actual" "$norm_expected"; then
-            print_success "Sample #$i: PASSED"
+        if outputs_match "$expected_data" "$(cat "$temp_actual")"; then
+            print_success "Sample #$i: PASSED (${LAST_RUN_MS} ms)"
             passed=$((passed + 1))
         else
-            print_error "Sample #$i: FAILED (Output Mismatch)"
-            printf "${YELLOW}Input Used:${NC}\n"
-            cat "$temp_input" | sed 's/^/  /'
-            printf "${YELLOW}Expected Output:${NC}\n"
+            print_error "Sample #$i: FAILED (Output Mismatch, ${LAST_RUN_MS} ms)"
+            printf '%b\n' "${YELLOW}Input Used:${NC}"
+            sed 's/^/  /' "$temp_input"
+            printf '%b\n' "${YELLOW}Expected Output:${NC}"
             printf '%s\n' "$expected_data" | sed 's/^/  /'
-            printf "${YELLOW}Your Output:${NC}\n"
-            cat "$temp_actual" | sed 's/^/  /'
-            
+            printf '%b\n' "${YELLOW}Your Output:${NC}"
+            sed 's/^/  /' "$temp_actual"
+
             # Show diff if possible
             if command -v diff &> /dev/null; then
-                printf "${YELLOW}Diff:${NC}\n"
+                local norm_actual norm_expected
+                norm_actual=$(mktemp)
+                norm_expected=$(mktemp)
+                add_cleanup "$norm_actual"
+                add_cleanup "$norm_expected"
+                normalize_output "$(cat "$temp_actual")" > "$norm_actual"
+                normalize_output "$expected_data" > "$norm_expected"
+                printf '%b\n' "${YELLOW}Diff:${NC}"
                 diff -u "$norm_expected" "$norm_actual" | sed 's/^/  /' || true
             fi
             failed=$((failed + 1))
@@ -960,9 +1072,10 @@ cmd_test_all() {
 
     printf '\n'
     print_header "Test Summary"
-    print_info "Total: $sample_count | Passed: ${GREEN}$passed${NC} | Failed: ${RED}$failed${NC}"
-    
+    print_info "Total: $sample_count | Passed: ${GREEN}$passed${NC} | Failed: ${RED}$failed${NC} | Max time: ${max_ms} ms"
+
     if [ "$failed" -eq 0 ]; then
+        print_warnings_if_any
         print_success "All problem samples passed!"
         return 0
     else
@@ -972,18 +1085,41 @@ cmd_test_all() {
 }
 
 cmd_test() {
-    local arg="${1:-}"
-    
-    # Check if we are in a problem directory or argument is a problem
+    local arg=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --checker|-c)
+                shift || true
+                [ -z "${1:-}" ] && error_exit "Missing value for --checker" "$EXIT_USAGE"
+                CHECKER="$1"
+                validate_checker "$CHECKER"
+                ;;
+            --timeout|-t)
+                shift || true
+                [ -z "${1:-}" ] && error_exit "Missing value for --timeout" "$EXIT_USAGE"
+                EXEC_TIMEOUT="$1"
+                ;;
+            --help|-h)
+                cmd_help
+                return 0
+                ;;
+            *)
+                if [ -z "$arg" ]; then
+                    arg="$1"
+                else
+                    print_warning "Ignoring extra argument: $1"
+                fi
+                ;;
+        esac
+        shift || true
+    done
+
+    # An explicit problem argument wins; otherwise fall back to the cwd.
     local prob_dir=""
-    if [ -f "$PWD/problem.txt" ]; then
-        prob_dir="$PWD"
-    elif [ -n "$arg" ]; then
-        if [ -d "$PWD/$arg" ] && [ -f "$PWD/$arg/problem.txt" ]; then
-            prob_dir="$PWD/$arg"
-        elif [ -d "$SRC_DIR/$arg" ] && [ -f "$SRC_DIR/$arg/problem.txt" ]; then
-            prob_dir="$SRC_DIR/$arg"
-        fi
+    if [ -n "$arg" ]; then
+        prob_dir=$(resolve_problem_dir "$arg") || error_exit "Problem not found: $arg (looked in ./$arg and $SRC_DIR/$arg)" "$EXIT_IO"
+    else
+        prob_dir=$(resolve_problem_dir) || true
     fi
 
     if [ -n "$prob_dir" ]; then
@@ -1017,6 +1153,291 @@ cmd_test() {
     fi
 }
 
+# ==================== SAMPLES COMMAND ====================
+
+cmd_samples() {
+    local arg="${1:-}"
+    local prob_dir
+    prob_dir=$(resolve_problem_dir "$arg") || error_exit "No problem.txt found${arg:+ for $arg}" "$EXIT_IO"
+    local prob_file="$prob_dir/problem.txt"
+    local n
+    n=$(count_samples "$prob_file")
+    print_info "$prob_file: $n sample(s)"
+    local i
+    for ((i=1; i<=n; i++)); do
+        printf '\n%b\n' "${BLUE}Sample #$i input:${NC}"
+        normalize_output "$(extract_test_input "$prob_file" "$i")" | sed 's/^/  /'
+        printf '\n%b\n' "${BLUE}Sample #$i output:${NC}"
+        normalize_output "$(extract_expected_output "$prob_file" "$i" || printf '(none)')" | sed 's/^/  /'
+        printf '\n'
+    done
+}
+
+# ==================== STRESS COMMAND ====================
+
+cmd_stress() {
+    local arg=""
+    local iterations="${CF_STRESS_ITERATIONS:-200}"
+    local brute_src=""
+    local gen_src=""
+    local seed_base=1
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -n|--iterations)
+                shift || true
+                [[ "${1:-}" =~ ^[0-9]+$ ]] || error_exit "Invalid iteration count: ${1:-}" "$EXIT_USAGE"
+                iterations="$1"
+                ;;
+            --brute|-b)
+                shift || true
+                [ -z "${1:-}" ] && error_exit "Missing value for --brute" "$EXIT_USAGE"
+                brute_src="$1"
+                ;;
+            --gen|--generator|-g)
+                shift || true
+                [ -z "${1:-}" ] && error_exit "Missing value for --gen" "$EXIT_USAGE"
+                gen_src="$1"
+                ;;
+            --seed)
+                shift || true
+                [[ "${1:-}" =~ ^[0-9]+$ ]] || error_exit "Invalid seed: ${1:-}" "$EXIT_USAGE"
+                seed_base="$1"
+                ;;
+            --checker|-c)
+                shift || true
+                [ -z "${1:-}" ] && error_exit "Missing value for --checker" "$EXIT_USAGE"
+                CHECKER="$1"
+                validate_checker "$CHECKER"
+                ;;
+            --timeout|-t)
+                shift || true
+                [ -z "${1:-}" ] && error_exit "Missing value for --timeout" "$EXIT_USAGE"
+                EXEC_TIMEOUT="$1"
+                ;;
+            --help|-h)
+                cmd_help
+                return 0
+                ;;
+            *)
+                if [ -z "$arg" ]; then
+                    arg="$1"
+                else
+                    print_warning "Ignoring extra argument: $1"
+                fi
+                ;;
+        esac
+        shift || true
+    done
+
+    local prob_dir
+    if [ -n "$arg" ]; then
+        prob_dir=$(resolve_problem_dir "$arg") || {
+            if [ -d "$arg" ]; then prob_dir="$(cd "$arg" && pwd)"; else error_exit "Problem not found: $arg" "$EXIT_IO"; fi
+        }
+    else
+        prob_dir="$PWD"
+    fi
+
+    [ -z "$brute_src" ] && brute_src="$prob_dir/brute.cpp"
+    if [ -z "$gen_src" ]; then
+        if [ -f "$prob_dir/gen.cpp" ]; then gen_src="$prob_dir/gen.cpp"; else gen_src="$prob_dir/generator.cpp"; fi
+    fi
+    validate_file "$brute_src"
+    validate_file "$gen_src"
+
+    collect_cpp_files "$prob_dir"
+    local sources=()
+    local f
+    for f in ${cpp_files[@]+"${cpp_files[@]}"}; do
+        case "$(basename "$f")" in
+            brute.cpp|gen.cpp|generator.cpp) ;;
+            *) sources+=("$f") ;;
+        esac
+    done
+    [ ${#sources[@]} -eq 0 ] && error_exit "No solution source found in $prob_dir" "$EXIT_USAGE"
+
+    print_header "Stress test: ${iterations} iterations, checker $CHECKER"
+    local sol_bin brute_bin gen_bin
+    sol_bin=$(compile_cached "solution" "${sources[@]}") || return 1
+    brute_bin=$(compile_cached "brute" "$brute_src") || return 1
+    gen_bin=$(compile_cached "generator" "$gen_src") || return 1
+
+    local input_tmp sol_out brute_out
+    input_tmp=$(mktemp); sol_out=$(mktemp); brute_out=$(mktemp)
+    add_cleanup "$input_tmp"; add_cleanup "$sol_out"; add_cleanup "$brute_out"
+
+    local i seed started max_ms=0
+    started=$(now_ms)
+    for ((i=0; i<iterations; i++)); do
+        seed=$((seed_base + i))
+        if ! "$gen_bin" "$seed" > "$input_tmp" 2>/dev/null; then
+            print_error "Generator failed on seed $seed"
+            return 1
+        fi
+        if ! safe_execute --output="$sol_out" "$sol_bin" "$input_tmp" > /dev/null; then
+            print_error "Solution crashed or timed out on iteration $((i+1)) (seed $seed)"
+            cp "$input_tmp" "$prob_dir/stress_fail.txt"
+            print_info "Failing input saved to $prob_dir/stress_fail.txt"
+            return 1
+        fi
+        [ "$LAST_RUN_MS" -gt "$max_ms" ] && max_ms="$LAST_RUN_MS"
+        if ! safe_execute --output="$brute_out" "$brute_bin" "$input_tmp" > /dev/null; then
+            print_error "Brute force crashed or timed out on iteration $((i+1)) (seed $seed)"
+            cp "$input_tmp" "$prob_dir/stress_fail.txt"
+            return 1
+        fi
+        if ! outputs_match "$(cat "$brute_out")" "$(cat "$sol_out")"; then
+            printf '\n'
+            print_error "Counter-example found on iteration $((i+1)) (seed $seed)"
+            printf '%b\n' "${YELLOW}Input:${NC}"
+            sed 's/^/  /' "$input_tmp"
+            printf '%b\n' "${YELLOW}Brute output:${NC}"
+            sed 's/^/  /' "$brute_out"
+            printf '%b\n' "${YELLOW}Solution output:${NC}"
+            sed 's/^/  /' "$sol_out"
+            cp "$input_tmp" "$prob_dir/stress_fail.txt"
+            print_info "Failing input saved to $prob_dir/stress_fail.txt"
+            return 1
+        fi
+        if is_tty && (( (i+1) % 25 == 0 )); then
+            printf '\r%b' "${DIM}  $((i+1))/$iterations ok, max ${max_ms} ms${NC}"
+        fi
+    done
+    is_tty && printf '\r'
+    print_success "No counter-example in $iterations iterations ($(( $(now_ms) - started )) ms, solution max ${max_ms} ms)"
+}
+
+# ==================== WATCH COMMAND ====================
+
+# Signature of the watched files: mtimes of every .cpp and problem.txt.
+watch_signature() {
+    local dir="$1"
+    find "$dir" -maxdepth 1 \( -name '*.cpp' -o -name 'problem.txt' \) -type f -exec ls -l --time-style=+%s {} + 2>/dev/null \
+        || find "$dir" -maxdepth 1 \( -name '*.cpp' -o -name 'problem.txt' \) -type f -exec stat -f '%m %N' {} + 2>/dev/null
+}
+
+cmd_watch() {
+    local arg="${1:-}"
+    local prob_dir
+    prob_dir=$(resolve_problem_dir "$arg") || error_exit "No problem.txt found${arg:+ for $arg}" "$EXIT_IO"
+    print_info "Watching $prob_dir (Ctrl+C to stop)"
+    local last=""
+    while true; do
+        local sig
+        sig=$(watch_signature "$prob_dir")
+        if [ "$sig" != "$last" ]; then
+            last="$sig"
+            if is_tty; then printf '\033[2J\033[H'; fi
+            printf '%b\n' "${DIM}$(date '+%H:%M:%S') change detected${NC}"
+            cmd_test_all "$prob_dir" || true
+            printf '\n%b\n' "${DIM}Waiting for changes...${NC}"
+        fi
+        sleep 1
+    done
+}
+
+# ==================== DOCTOR COMMAND ====================
+
+doctor_check() {
+    local status="$1"
+    local label="$2"
+    local detail="${3:-}"
+    if [ "$status" = ok ]; then
+        printf '%b\n' "  ${GREEN}ok${NC}    $label${detail:+ ${DIM}($detail)${NC}}"
+    elif [ "$status" = warn ]; then
+        printf '%b\n' "  ${YELLOW}warn${NC}  $label${detail:+ ${DIM}($detail)${NC}}"
+    else
+        printf '%b\n' "  ${RED}fail${NC}  $label${detail:+ ${DIM}($detail)${NC}}"
+    fi
+}
+
+cmd_doctor() {
+    local problems=0
+    print_header "cf doctor (v$CF_VERSION)"
+    printf '%b\n' "  repo  $REPO_ROOT"
+
+    local cxx_ver
+    cxx_ver=$($COMPILER --version 2>/dev/null | head -1)
+    doctor_check ok "compiler: $COMPILER" "$cxx_ver"
+
+    if [ -f "$INCLUDE_DIR/bits/stdc++.h" ]; then
+        doctor_check ok "bits/stdc++.h shim" "$INCLUDE_DIR"
+    else
+        doctor_check fail "bits/stdc++.h shim missing" "$INCLUDE_DIR"
+        problems=$((problems + 1))
+    fi
+
+    local tmp_src tmp_bin
+    tmp_src=$(mktemp).cpp
+    tmp_bin=$(mktemp)
+    add_cleanup "$tmp_src"; add_cleanup "$tmp_bin"
+    printf '%s\n' '#include <bits/stdc++.h>' 'int main(){int a,b;std::cin>>a>>b;std::cout<<a+b<<"\n";}' > "$tmp_src"
+    local started
+    started=$(now_ms)
+    if safe_compile "$tmp_bin" "$tmp_src" > /dev/null 2>&1; then
+        local out
+        out=$(printf '2 3\n' | "$tmp_bin" 2>/dev/null || true)
+        if [ "$out" = "5" ]; then
+            doctor_check ok "compile + run smoke test" "$(( $(now_ms) - started )) ms with $CXXFLAGS"
+        else
+            doctor_check fail "smoke test produced '$out' instead of 5"
+            problems=$((problems + 1))
+        fi
+    else
+        doctor_check fail "smoke test failed to compile" "flags: $CXXFLAGS"
+        problems=$((problems + 1))
+    fi
+
+    if command -v timeout &> /dev/null || command -v gtimeout &> /dev/null; then
+        doctor_check ok "timeout command" "execution limit ${EXEC_TIMEOUT}s"
+    else
+        doctor_check warn "timeout command missing" "brew install coreutils"
+    fi
+
+    local tool
+    for tool in node npm make shellcheck; do
+        if command -v "$tool" &> /dev/null; then
+            doctor_check ok "$tool" "$("$tool" --version 2>/dev/null | head -1)"
+        elif [ "$tool" = node ] || [ "$tool" = npm ]; then
+            doctor_check warn "$tool missing" "needed for cf serve"
+        else
+            doctor_check warn "$tool missing" "optional"
+        fi
+    done
+
+    if [ -d "$REPO_ROOT/web/node_modules" ]; then
+        doctor_check ok "web dependencies installed"
+    else
+        doctor_check warn "web dependencies not installed" "cf serve runs npm install"
+    fi
+
+    if [ -d "$BUILD_CACHE_DIR" ]; then
+        local n
+        n=$(find "$BUILD_CACHE_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+        doctor_check ok "build cache" "$n binaries in $BUILD_CACHE_DIR"
+    fi
+
+    printf '\n'
+    if [ "$problems" -eq 0 ]; then
+        print_success "Everything looks good"
+    else
+        error_exit "$problems problem(s) found" 1
+    fi
+}
+
+# ==================== CLEAN COMMAND ====================
+
+cmd_clean() {
+    local n=0
+    if [ -d "$BUILD_CACHE_DIR" ]; then
+        n=$(find "$BUILD_CACHE_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+        rm -rf "$BUILD_CACHE_DIR"
+    fi
+    rm -rf "$BUILD_DIR"
+    print_success "Removed build cache ($n cached binaries)"
+}
+
 # ==================== UPDATE COMMAND ====================
 
 cmd_update() {
@@ -1034,11 +1455,9 @@ cmd_update() {
     cd "$REPO_ROOT" || error_exit "Failed to change to repository directory" 1
 
     # Check for uncommitted changes
-    if ! git diff-index --quiet HEAD -- 2>/dev/null;
-        then
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
         print_warning "You have uncommitted changes in the repository"
-        if [ "${CF_NONINTERACTIVE:-0}" -eq 1 ] || ! is_tty;
-            then
+        if [ "${CF_NONINTERACTIVE:-0}" -eq 1 ] || ! is_tty; then
             error_exit "Update aborted in non-interactive mode due to uncommitted changes" "$EXIT_UPDATE"
         fi
         printf '%s' "Continue with update? (y/N): "
@@ -1056,7 +1475,7 @@ cmd_update() {
     local remote
     local remote_branch
     current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
     if [ -z "$upstream" ] && [ -n "$current_branch" ]; then
         upstream="origin/$current_branch"
     fi
@@ -1068,21 +1487,19 @@ cmd_update() {
 
     # Fetch and pull latest changes
     print_info "Fetching latest changes from $remote..."
-    if ! git fetch "$remote" 2>&1;
-        then
+    if ! git fetch "$remote" 2>&1; then
         error_exit "Failed to fetch from remote repository" "$EXIT_UPDATE"
     fi
 
     print_info "Pulling latest changes from $remote/$remote_branch..."
-    if ! git pull "$remote" "$remote_branch" 2>&1;
-        then
-        error_exit "Failed to pull latest changes" "$EXIT_UPDATE"
+    if ! git pull --ff-only "$remote" "$remote_branch" 2>&1; then
+        error_exit "Failed to pull latest changes (non fast-forward?)" "$EXIT_UPDATE"
     fi
 
     print_success "Repository updated successfully"
 
     # Run setup script if it exists
-    if [ -f "$SCRIPTS_DIR/setup.sh" ]; then
+    if [ -f "$SCRIPTS_DIR/setup.sh" ] && [ "${CF_UPDATE_SKIP_SETUP:-0}" -ne 1 ]; then
         print_info "Running setup script..."
         if bash "$SCRIPTS_DIR/setup.sh"; then
             print_success "Setup completed successfully"
@@ -1090,7 +1507,7 @@ cmd_update() {
             print_warning "Setup script encountered issues, but update completed"
         fi
     else
-        print_warning "Setup script not found, skipping setup"
+        print_info "Skipping setup script"
     fi
 
     # Return to original directory
@@ -1132,22 +1549,31 @@ cmd_serve() {
 
     export CF_PROBLEMS_DIR="$problems_dir"
     export CF_SERVE_MODE=1
-    
+
     print_info "Starting CF Toolkit Web Interface..."
     print_info "Problems directory: $problems_dir"
-    
+
     if [ ! -d "$REPO_ROOT/web" ]; then
         error_exit "Web interface directory not found: $REPO_ROOT/web" "$EXIT_IO"
     fi
 
+    if ! command -v npm &> /dev/null; then
+        error_exit "npm not found; install Node.js 20+ to run the web workbench" "$EXIT_IO"
+    fi
+
     cd "$REPO_ROOT/web"
-    
+
     if [ ! -d "node_modules" ]; then
         print_info "Installing dependencies..."
         npm install
     fi
 
     # Use exec to replace the shell process and ensure signals are handled
+    if [ "${CF_SERVE_PROD:-0}" -eq 1 ]; then
+        print_info "Production mode: building..."
+        npm run build
+        exec npm run start
+    fi
     exec npm run dev
 }
 
@@ -1159,56 +1585,66 @@ cf - Codeforces CLI Tool
 
 USAGE:
   cf <command> [args]
-    cf [input] [--sample N] [--input FILE] [--stdin]
+  cf [problem|file|"inline input"] [--sample N] [--input FILE] [--stdin]
 
 COMMANDS:
-  template <name>    Create new problem template
-  test               Run test suite with validation
-  serve [name]       Start web interface (auto-creates problem if name given)
-  update             Update cf tool to latest version
-  help               Show this help message
+  template <name> [--from T]  Create a problem directory (T: dp, graph, math, or a file)
+  test [name]                 Run every sample in problem.txt, with timing
+  stress [name] [-n N]        Solution vs brute.cpp on gen.cpp inputs (seed = argv[1])
+  samples [name]              Print the samples parsed from problem.txt
+  watch [name]                Re-run the samples whenever a source changes
+  serve [name]                Start the web workbench (auto-creates the problem)
+  doctor                      Check compiler, shim, timeout and web toolchain
+  clean                       Remove the build cache
+  update                      Pull the latest version of cf
+  version                     Print the version
+  help                        Show this help message
+
+OPTIONS (run / test / stress):
+  --sample N, -s N            Use sample #N (run)
+  --input FILE, -i FILE       Explicit input file (run)
+  --stdin                     Force interactive stdin (run)
+  --checker lines|tokens      Output comparison mode (default: lines)
+  --timeout SEC, -t SEC       Execution time limit (default: 5)
+  -n N, --brute F, --gen F    Stress iterations / brute source / generator source
+  --seed N                    First generator seed (stress)
 
 EXAMPLES:
-  cf template 1000A           Create new problem 1000A
-  cf serve                    Start web interface
-  cf serve 1000A              Create (if needed) and serve 1000A in web
-  cf problem.txt              Run solution with input from file
+  cf template 1000A           Create ./1000A with solution.cpp and problem.txt
+  cf template 1000A --from dp Start from templates/dp.cpp
+  cf 1000A                    Compile src/1000A (or ./1000A) and run sample #1
   cf problem.txt 2            Run sample #2 from problem.txt
-  cf --sample 2               Run sample #2 from problem.txt (auto)
-    cf --input input.txt         Run with explicit input file
-    cf --stdin                   Force interactive stdin
-  cf "5\n1 2 3 4 5"           Run solution with inline input
-  cf test                     Run test suite
-
-FEATURES:
-    - Auto-detects .cpp files in current directory
-    - Auto-uses problem.txt when present
-    - Supports multiple samples with --sample N
-    - Timeout protection (5s) prevents infinite loops
-    - Validates input and handles errors gracefully
-    - Compares output with expected results
-    - Build caching for faster repeated runs
-    - Cross-platform (Linux/macOS/WSL)
-    - Production-grade reliability
-    - Web Interface with 'cf serve'
+  cf "5\n1 2 3 4 5"           Run the solution in the cwd with inline input
+  cf test                     Run all samples of the problem in the cwd
+  cf test 1000A --checker tokens
+  cf stress -n 1000           1000 iterations of brute.cpp vs solution.cpp
+  cf watch                    Re-test on every save
+  cf serve 1000A              Open the web workbench on problem 1000A
 
 ENVIRONMENT:
   CF_REPO_ROOT        Override repository root directory
-  CF_PROBLEMS_DIR     Directory containing problem folders
+  CF_PROBLEMS_DIR     Directory containing problem folders (serve)
+  CF_CXX / CXX        Compiler to use (default: g++, then clang++)
+  CF_CXXFLAGS         Override compiler flags (default: -std=c++23 -O2 -Wall -Wextra)
+  CF_TIMEOUT          Execution timeout in seconds (default: 5)
+  CF_CHECKER          Default checker: lines or tokens
+  CF_STRESS_ITERATIONS Default stress iterations (200)
+  CF_BUILD_CACHE_DIR  Override build cache location
+  CF_FORCE_REBUILD    Force rebuild (set to 1)
+  CF_NONINTERACTIVE   Disable prompts (set to 1)
+  CF_NO_EDITOR        Do not open VS Code after cf template (set to 1)
+  CF_SERVE_PROD       cf serve runs a production build (set to 1)
   CF_VERBOSE          Set to 1 for debug output
-    CF_CXXFLAGS         Override compiler flags
-    CF_TIMEOUT          Override execution timeout (seconds)
-    CF_BUILD_CACHE_DIR  Override build cache location
-    CF_FORCE_REBUILD    Force rebuild (set to 1)
-    CF_NONINTERACTIVE   Disable prompts (set to 1)
+  NO_COLOR            Disable colored output
 
-NEXT STEPS:
-  1. Start web interface: cf serve
-  2. Or CLI: cf template 1000A
-  3. Edit solution.cpp and run: cf problem.txt
+FILES:
+  problem.txt         Statement pasted from Codeforces; samples are parsed from Examples
+  solution.cpp        Your solution (every .cpp in the directory is compiled together)
+  brute.cpp, gen.cpp  Reference solution and input generator for cf stress
+  samples/N.in|.out   Optional explicit sample files used when problem.txt has none
+  .cfconfig           Optional shell snippet sourced for per-repo overrides
 
 For more information, visit: https://github.com/mbn-code/cf
-
 EOF
 }
 
@@ -1220,29 +1656,46 @@ main() {
     shift || true
 
     case "$command" in
-        template)
+        template|new)
             # Validate repo structure for template command
             if [ ! -d "$SRC_DIR" ]; then
                 error_exit "Repository structure not found. Expected $SRC_DIR" 2
             fi
             cmd_template "$@"
-            ;; 
+            ;;
         test)
-            # Validate repo structure for test command
             if [ ! -d "$SRC_DIR" ]; then
                 error_exit "Repository structure not found. Expected $SRC_DIR" 2
             fi
             cmd_test "$@"
-            ;; 
+            ;;
+        stress)
+            cmd_stress "$@"
+            ;;
+        samples)
+            cmd_samples "$@"
+            ;;
+        watch)
+            cmd_watch "$@"
+            ;;
         serve)
             cmd_serve "$@"
             ;;
+        doctor)
+            cmd_doctor "$@"
+            ;;
+        clean)
+            cmd_clean "$@"
+            ;;
         update)
             cmd_update "$@"
-            ;; 
+            ;;
+        version|--version|-V)
+            printf 'cf %s\n' "$CF_VERSION"
+            ;;
         help|--help|-h)
             cmd_help
-            ;; 
+            ;;
         "")
             # Auto-detect problem.txt if no args given
             if [ -f "$PWD/problem.txt" ]; then
@@ -1253,17 +1706,19 @@ main() {
                 printf '%s\n' "Commands:"
                 printf '%s\n' "  cf template <name>     Create new problem template"
                 printf '%s\n' "  cf [input]             Compile and run solution"
-                printf '%s\n' "  cf test                Run test suite"
-                printf '%s\n' "  cf update              Update to latest version"
+                printf '%s\n' "  cf test                Run all samples"
+                printf '%s\n' "  cf stress              Solution vs brute force"
+                printf '%s\n' "  cf serve               Start the web workbench"
+                printf '%s\n' "  cf doctor              Check the toolchain"
                 printf '%s\n' "  cf help                Show help"
                 printf '\n'
                 printf '%s\n' "For more information: cf help"
                 return 1
             fi
-            ;; 
+            ;;
         *)
             cmd_run "$command" "$@"
-            ;; 
+            ;;
     esac
 }
 

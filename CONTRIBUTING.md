@@ -1,87 +1,131 @@
-# Contributing to cf Toolkit
+# Contributing to cf
 
-First off, thanks for taking the time to contribute! Contributions are what make the open-source community such an amazing place to learn, inspire, and create.
+Thanks for taking the time to contribute. This page covers how to report
+problems, how the repository is laid out, and what a pull request needs to
+pass.
 
-## How Can I Contribute?
+## How can I contribute?
 
-### Reporting Bugs
-- Use the [Bug Report Template](.github/ISSUE_TEMPLATE/bug_report.yml).
-- Provide a clear and concise description of the bug.
-- Include reproduction steps and your environment details.
+### Reporting bugs
 
-### Suggesting Enhancements
-- Use the [Feature Request Template](.github/ISSUE_TEMPLATE/feature_request.yml).
-- Explain why the feature would be useful.
+- Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.yml).
+- Include the output of `cf doctor` (or the Server block of the Settings tab)
+  so we know the compiler and platform.
+- Provide reproduction steps: the source, the input, and what you expected.
 
-### Pull Requests
-1. Fork the repo and create your branch from `main`.
-2. If you've added code that should be tested, add tests.
-3. Ensure the test suite passes.
-4. Make sure your code follows the existing style.
-5. Write a clear title and description for your pull request.
+### Suggesting enhancements
 
-> [!IMPORTANT]
-> Always run `npm run lint` and `npm run build` in the `web` directory before submitting a PR to catch any TypeScript or styling errors.
+- Use the [feature request template](.github/ISSUE_TEMPLATE/feature_request.yml).
+- Explain the workflow the feature would improve.
 
-## Development Setup
+### Pull requests
 
-### CLI Development
-The core logic resides in `scripts/`. If you modify `cf`, `test.sh`, or `build.sh`, make sure to test them across different problem structures.
+1. Fork the repository and create your branch from `main`.
+2. Add or update tests for the behaviour you change (see below).
+3. Run `make check` and make sure it is green.
+4. Match the surrounding style; the formatter runs on save for the web app.
+5. Write a clear title and description, and add a `CHANGELOG.md` entry under
+   an `Unreleased` heading for user-visible changes.
 
-> [!WARNING]
-> Be careful when modifying the `cf` script's path resolution logic, as it needs to work for both local clones and global installations.
+## Development setup
+
+### CLI
+
+The CLI is the single Bash script `scripts/cf`. It must keep working for
+both a local clone and a global installation (see the path resolution at the
+top of the script), on Linux, macOS (bash 3.2 and zsh) and Git Bash on
+Windows.
 
 ```bash
-# Test the CLI locally
-./scripts/cf --version
+bash scripts/cf doctor          # toolchain check
+bash tests/cli_test.sh          # 50+ end-to-end checks against the real compiler
+shellcheck -s bash scripts/cf   # must be clean
 ```
 
-### Web Interface Development
-The web interface is built with **Next.js 15**, **Tailwind CSS 4**, and **Shadcn UI**.
+### Web workbench
+
+The workbench is built with Next.js 16, React 19, Tailwind CSS 4 and
+shadcn/ui. The execution engine under `web/app/api/_engine/` uses only Node
+built-ins so it can be unit-tested without the framework.
 
 ```bash
 cd web
 npm install
-npm run dev
+npm run dev        # http://localhost:3000
+npm test           # vitest unit suite
+npm run e2e        # Playwright (npx playwright install chromium once)
+npm run check      # lint + typecheck + test + build
 ```
 
-The web interface communicates with the local filesystem via API routes in `web/app/api/`.
+Every `/api/*` route documents its request and response shape in a comment
+at the top of the file and in [docs/api.md](docs/api.md); keep the comment,
+the doc and the typed client in `web/lib/api.ts` in sync when you change a
+contract.
 
-## Project Structure
+## Project structure
 
-- `scripts/`: Core bash tools.
-- `web/`: Next.js web workbench.
-- `src/`: User solutions area.
-- `templates/`: C++ algorithm templates.
-- `include/`: Shared C++ headers.
-- `tests/`: Automated test suite for the toolkit itself.
+- `scripts/`: the `cf` CLI, `check.sh` (local quality gate), `validate.sh`
+  (release gate), `test.sh`, `build.sh`, `setup.sh`.
+- `web/`: the Next.js workbench (UI, API routes, engine, unit and e2e tests).
+- `src/`: sample solutions and the CLI template (`template.cpp`).
+- `templates/`: C++ starters used by `cf template --from`.
+- `include/`: the portable `<bits/stdc++.h>` shim.
+- `tests/`: the CLI suite and its fixtures.
+- `docs/`: user and developer documentation.
 
-## Style Guidelines
+## Tests
+
+| Layer   | Command                  | What it proves                                                   |
+| ------- | ------------------------ | ---------------------------------------------------------------- |
+| Engine  | `cd web && npm test`     | Compile cache, verdict classification, checkers, parsers, store. |
+| CLI     | `bash tests/cli_test.sh` | Real `cf` runs against the real compiler.                        |
+| Browser | `cd web && npm run e2e`  | The whole workbench end to end in Chromium.                      |
+| Gate    | `make check`             | shellcheck, CLI, lint, typecheck, unit tests, build, versions.   |
+
+Tests must be able to fail for a real reason. Prefer exercising the real
+compiler over mocking it.
+
+## Style guidelines
 
 ### Bash
-- Use `[[ ]]` instead of `[ ]` for conditions.
-- Quote variables to prevent word splitting.
-- Use meaningful names for functions.
+
+- `set -euo pipefail`, quote every expansion, prefer `[ ]` with explicit
+  tests as the existing script does, and keep shellcheck clean.
+- New commands get a `cmd_<name>` function, a `case` entry in `main`, a help
+  entry, and CLI tests.
 
 ### C++
+
 - Follow the patterns in `src/template.cpp`.
-- Use modern C++ features (C++20/23).
-- Keep performance in mind (Fast I/O, efficient algorithms).
+- Anything shipped as a template must compile with `-std=c++23 -Wall -Wextra`
+  and against the shim.
 
-### TypeScript/React
-- Use functional components and hooks.
-- Follow Tailwind CSS best practices.
-- Ensure components are accessible.
+### TypeScript / React
 
-## Commit Messages
-We follow a simple convention for commit messages:
-- `feat:` for new features.
-- `fix:` for bug fixes.
-- `docs:` for documentation changes.
-- `refactor:` for code changes that neither fix a bug nor add a feature.
-- `chore:` for updating build tasks, etc.
+- Functional components and hooks; keep the API tree free of imports from
+  `web/lib`.
+- Expose a stable `data-testid` on anything the e2e suite needs.
+- Guard every `localStorage` access so server rendering keeps working.
 
-Example: `feat: add support for interactive problems in web UI`
+## Commit messages
 
-## Code of Conduct
-Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project you agree to abide by its terms.
+Use the conventional prefixes already in the history:
+
+- `feat:` new features
+- `fix:` bug fixes
+- `docs:` documentation
+- `refactor:` code changes that neither fix a bug nor add a feature
+- `chore:` build, CI and tooling
+
+Example: `feat: import samples from a pasted statement`
+
+## Releasing
+
+See [docs/development.md](docs/development.md#releasing). Versions live in
+`scripts/cf` (`CF_VERSION`) and `web/package.json` and must match; CI
+enforces it.
+
+## Code of conduct
+
+This project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md).
+By participating you agree to abide by its terms.

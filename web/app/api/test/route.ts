@@ -7,18 +7,22 @@
  *     tests: { input: string, expected: string }[],  // cases (required)
  *     timeLimitMs?: number,                  // per-case limit, default 5000
  *     std?: string,                          // C++ standard, default gnu++17
- *     compilerFlags?: string[]
+ *     compilerFlags?: string[],              // validated against an allowlist
+ *     checker?: "lines"|"tokens"|"float",    // comparison mode, default lines
+ *     epsilon?: number,                      // float checker tolerance
+ *     stopOnFirstFailure?: boolean           // skip remaining cases after a non-AC
  *   }
  *
  * Response JSON (200):
  *   {
  *     ok: boolean,                           // true when every case is AC
  *     compiler: string|null,
- *     compile: { ok: boolean, stderr: string, ms: number },
- *     summary: { total, passed, failed, verdict },  // verdict is worst-of
+ *     compile: { ok, stderr, ms, cached, diagnostics, rejectedFlags },
+ *     checker: "lines"|"tokens"|"float",
+ *     summary: { total, passed, failed, skipped, verdict, maxTimeMs, totalTimeMs },
  *     results: Array<{
  *       index: number,
- *       verdict: "AC"|"WA"|"TLE"|"RE"|"CE",
+ *       verdict: "AC"|"WA"|"TLE"|"RE"|"CE"|"SKIPPED",
  *       input: string,
  *       expected: string,
  *       actual: string,                      // program stdout
@@ -27,74 +31,71 @@
  *       signal: string|null,
  *       timeMs: number,
  *       truncated: boolean,
+ *       presentationOnly: boolean,           // WA only: tokens match, layout differs
  *       diff: Array<{ line, expected, actual, same }>  // differing lines, WA only
  *     }>
  *   }
  * On a 400 the body is { error: string }.
- *
- * Comparison is trailing-whitespace tolerant (see _engine/compare).
  */
 
 import { NextResponse } from "next/server";
-import { compile, runBinary, cleanup } from "../_engine/cpp";
+import {
+  compile,
+  runBinary,
+  cleanup,
+  runVerdict,
+  runStderr,
+} from "../_engine/cpp";
 import { compareOutputs } from "../_engine/compare";
+import { normalizeTests } from "../_engine/store";
+import { readJson, badRequest, parseRunOptions, str } from "../_engine/request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Verdict = "AC" | "WA" | "TLE" | "RE" | "CE";
+type Verdict = "AC" | "WA" | "TLE" | "RE" | "CE" | "SKIPPED";
 
 // Worst-of ordering for the overall summary verdict.
 const SEVERITY: Record<Verdict, number> = {
   AC: 0,
+  SKIPPED: 0,
   WA: 1,
   TLE: 2,
   RE: 3,
   CE: 4,
 };
 
+const MAX_TESTS = 200;
+
 export async function POST(request: Request) {
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const { body, error } = await readJson(request);
+  if (error) return error;
 
-  const code = typeof body.code === "string" ? body.code : "";
-  if (!code.trim()) {
-    return NextResponse.json(
-      { error: "Missing required field: code" },
-      { status: 400 },
-    );
-  }
+  const code = str(body, "code");
+  if (!code.trim()) return badRequest("Missing required field: code");
 
-  const tests = Array.isArray(body.tests)
-    ? body.tests
-        .filter(
-          (t): t is Record<string, unknown> => !!t && typeof t === "object",
-        )
-        .map((t) => ({
-          input: typeof t.input === "string" ? t.input : "",
-          expected: typeof t.expected === "string" ? t.expected : "",
-        }))
-    : [];
+  const tests = normalizeTests(body.tests);
+  if (tests.length === 0)
+    return badRequest("Provide at least one test case in `tests`");
+  if (tests.length > MAX_TESTS)
+    return badRequest(`At most ${MAX_TESTS} test cases per request`);
 
-  if (tests.length === 0) {
-    return NextResponse.json(
-      { error: "Provide at least one test case in `tests`" },
-      { status: 400 },
-    );
-  }
+  const opts = parseRunOptions(body);
+  const stopOnFirstFailure = body.stopOnFirstFailure === true;
 
-  const timeLimitMs =
-    typeof body.timeLimitMs === "number" ? body.timeLimitMs : undefined;
-  const std = typeof body.std === "string" ? body.std : undefined;
-  const extraFlags = Array.isArray(body.compilerFlags)
-    ? body.compilerFlags.filter((f): f is string => typeof f === "string")
-    : undefined;
-
-  const compiled = await compile(code, { std, extraFlags, label: "test" });
+  const compiled = await compile(code, {
+    std: opts.std,
+    extraFlags: opts.extraFlags,
+    label: "test",
+  });
+  const compileBlock = {
+    ok: compiled.ok,
+    stderr: compiled.stderr,
+    ms: Math.round(compiled.ms),
+    cached: compiled.cached,
+    diagnostics: compiled.diagnostics,
+    rejectedFlags: compiled.rejectedFlags,
+  };
 
   // Compile error → every case reports CE so the UI can badge each row.
   if (!compiled.ok || !compiled.binPath) {
@@ -110,78 +111,109 @@ export async function POST(request: Request) {
       signal: null,
       timeMs: 0,
       truncated: false,
+      presentationOnly: false,
       diff: [],
     }));
     return NextResponse.json({
       ok: false,
       compiler: compiled.compiler,
-      compile: { ok: false, stderr: compiled.stderr, ms: compiled.ms },
+      compile: compileBlock,
+      checker: opts.checker,
       summary: {
         total: tests.length,
         passed: 0,
         failed: tests.length,
+        skipped: 0,
         verdict: "CE",
+        maxTimeMs: 0,
+        totalTimeMs: 0,
       },
       results,
     });
   }
 
   const results = [];
-  try {
-    for (let index = 0; index < tests.length; index++) {
-      const t = tests[index];
-      const run = await runBinary(compiled.binPath, {
-        input: t.input,
-        timeLimitMs,
-      });
-
-      let verdict: Verdict;
-      let diff: ReturnType<typeof compareOutputs>["diff"] = [];
-      if (run.timedOut) {
-        verdict = "TLE";
-      } else if (run.spawnError || run.exitCode !== 0 || run.signal) {
-        verdict = "RE";
-      } else {
-        const cmp = compareOutputs(t.expected, run.stdout);
-        verdict = cmp.match ? "AC" : "WA";
-        diff = cmp.diff;
-      }
-
+  let failedSoFar = false;
+  for (let index = 0; index < tests.length; index++) {
+    const t = tests[index];
+    if (stopOnFirstFailure && failedSoFar) {
       results.push({
         index,
-        verdict,
+        verdict: "SKIPPED" as Verdict,
         input: t.input,
         expected: t.expected,
-        actual: run.stdout,
-        stderr: run.spawnError
-          ? `${run.stderr}\n${run.spawnError}`.trim()
-          : run.stderr,
-        exitCode: run.exitCode,
-        signal: run.signal,
-        timeMs: run.timeMs,
-        truncated: run.truncated,
-        diff,
+        actual: "",
+        stderr: "",
+        exitCode: null,
+        signal: null,
+        timeMs: 0,
+        truncated: false,
+        presentationOnly: false,
+        diff: [],
       });
+      continue;
     }
-  } finally {
-    await cleanup(compiled.workDir);
+
+    const run = await runBinary(compiled.binPath, {
+      input: t.input,
+      timeLimitMs: opts.timeLimitMs,
+    });
+
+    let verdict: Verdict;
+    let diff: ReturnType<typeof compareOutputs>["diff"] = [];
+    let presentationOnly = false;
+    const rv = runVerdict(run);
+    if (rv !== "OK") {
+      verdict = rv;
+    } else {
+      const cmp = compareOutputs(t.expected, run.stdout, {
+        mode: opts.checker,
+        epsilon: opts.epsilon,
+      });
+      verdict = cmp.match ? "AC" : "WA";
+      diff = cmp.diff;
+      presentationOnly = !!cmp.presentationOnly;
+    }
+    if (verdict !== "AC") failedSoFar = true;
+
+    results.push({
+      index,
+      verdict,
+      input: t.input,
+      expected: t.expected,
+      actual: run.stdout,
+      stderr: runStderr(run),
+      exitCode: run.exitCode,
+      signal: run.signal,
+      timeMs: run.timeMs,
+      truncated: run.truncated,
+      presentationOnly,
+      diff,
+    });
   }
 
   const passed = results.filter((r) => r.verdict === "AC").length;
+  const skipped = results.filter((r) => r.verdict === "SKIPPED").length;
   const worst = results.reduce<Verdict>(
     (acc, r) => (SEVERITY[r.verdict] > SEVERITY[acc] ? r.verdict : acc),
     "AC",
   );
+  const maxTimeMs = results.reduce((m, r) => Math.max(m, r.timeMs), 0);
+  const totalTimeMs = results.reduce((s, r) => s + r.timeMs, 0);
 
   return NextResponse.json({
     ok: passed === results.length,
     compiler: compiled.compiler,
-    compile: { ok: true, stderr: compiled.stderr, ms: compiled.ms },
+    compile: compileBlock,
+    checker: opts.checker,
     summary: {
       total: results.length,
       passed,
-      failed: results.length - passed,
+      failed: results.length - passed - skipped,
+      skipped,
       verdict: worst,
+      maxTimeMs: Math.round(maxTimeMs * 10) / 10,
+      totalTimeMs: Math.round(totalTimeMs * 10) / 10,
     },
     results,
   });

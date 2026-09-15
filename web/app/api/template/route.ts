@@ -1,23 +1,28 @@
 /**
- * POST /api/template — fetch a named starter template from `templates/<name>.cpp`.
+ * /api/template — starter templates shipped under the repo `templates/` dir.
  *
- * Request:  { name: string }     // e.g. "dp", "graph", "math"
- * Response: { stdout: string, stderr: string, exitCode: number, content: string }
+ * GET  /api/template            → { templates: string[] }   // e.g. ["dp","graph","math"]
+ * POST /api/template { name }   → { stdout, stderr, exitCode, content }
  *           `stdout` and `content` both hold the template text (stdout kept for
  *           backward compatibility). On a miss: exitCode 1 and an error stderr.
- *
- * Self-contained (Node built-ins only) so the api tree never imports web/lib.
  */
 
 import { NextResponse } from "next/server";
-import { readTemplate } from "../_engine/store";
+import { readTemplate, listTemplates } from "../_engine/store";
+import { readJson, str } from "../_engine/request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+export async function GET() {
+  return NextResponse.json({ templates: await listTemplates() });
+}
+
 export async function POST(request: Request) {
-  const { name } = await request.json();
-  const content = await readTemplate(typeof name === "string" ? name : "");
+  const { body, error } = await readJson(request);
+  if (error) return error;
+  const name = str(body, "name");
+  const content = await readTemplate(name);
   if (!content) {
     return NextResponse.json({
       stdout: "",
