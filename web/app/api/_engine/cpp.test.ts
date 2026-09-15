@@ -97,7 +97,11 @@ maybe("compile + run", () => {
   });
 
   it("classifies a timeout as TLE", async () => {
-    const r = await compile("int main(){ for(;;){} }\n");
+    // A side-effect-free infinite loop is UB in C++ and gcc -O2 deletes it
+    // (the ubuntu runner returned immediately); the volatile write keeps it.
+    const r = await compile(
+      "int main(){ volatile unsigned long long n = 0; for(;;){ ++n; } }\n",
+    );
     expect(r.ok).toBe(true);
     const run = await runBinary(r.binPath!, { timeLimitMs: 300 });
     expect(run.timedOut).toBe(true);
